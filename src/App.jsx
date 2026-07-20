@@ -372,6 +372,7 @@ export default function App() {
   const [saved, setSaved] = useState([]);
   const [showSaved, setShowSaved] = useState(false);
   const [status, setStatus] = useState("");
+  const [currentQuoteId, setCurrentQuoteId] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -566,24 +567,34 @@ export default function App() {
   const finalTotal = subtotal + tax;
 
   const saveQuote = async () => {
+    const id = currentQuoteId || uid();
+    const isUpdate = !!currentQuoteId;
     const quote = {
-      id: uid(), savedAt: Date.now(), customer, filmPresets,
+      id, savedAt: Date.now(), customer, filmPresets,
       floors, // photos are already compressed on upload, so they're kept with the quote
       tripFee, taxRate, addOnPresets, appliedAddOns, kmTraveled, fuelRatePerKm,
       grandTotal: finalTotal,
     };
     try {
-      await window.storage.set(`roomquote:${quote.id}`, JSON.stringify(quote));
-      setSaved((s) => [quote, ...s]);
-      setStatus("Quote saved, photos included.");
+      await window.storage.set(`roomquote:${id}`, JSON.stringify(quote));
+      setSaved((s) => {
+        const rest = s.filter((q) => q.id !== id);
+        return [quote, ...rest];
+      });
+      setCurrentQuoteId(id);
+      setStatus(isUpdate ? "Quote updated." : "Quote saved, photos included.");
       setTimeout(() => setStatus(""), 3500);
     } catch (e) {
       // Most likely storage is full (older browsers cap localStorage around 5-10MB).
       // Retry once without photos so the quote itself isn't lost.
       try {
         const withoutPhotos = { ...quote, floors: quote.floors.map((fl) => ({ ...fl, rooms: fl.rooms.map((r) => ({ ...r, photo: null })) })) };
-        await window.storage.set(`roomquote:${quote.id}`, JSON.stringify(withoutPhotos));
-        setSaved((s) => [withoutPhotos, ...s]);
+        await window.storage.set(`roomquote:${id}`, JSON.stringify(withoutPhotos));
+        setSaved((s) => {
+          const rest = s.filter((q) => q.id !== id);
+          return [withoutPhotos, ...rest];
+        });
+        setCurrentQuoteId(id);
         setStatus("Storage is full, so this quote saved without photos. Delete some older saved quotes to free up room.");
         setTimeout(() => setStatus(""), 5000);
       } catch (e2) {
@@ -593,6 +604,7 @@ export default function App() {
     }
   };
   const loadQuote = (q) => {
+    setCurrentQuoteId(q.id);
     setCustomer({ name: "", address: "", city: "", projectName: "", phone: "", date: new Date().toISOString().slice(0, 10), ...q.customer });
     setFilmPresets(q.filmPresets || DEFAULT_FILM_PRESETS);
     setFloors(q.floors.map((fl) => ({ ...fl, hidden: !!fl.hidden, rooms: fl.rooms.map((r) => ({ ...r, hidden: !!r.hidden })) })));
@@ -605,7 +617,26 @@ export default function App() {
     setShowSaved(false);
   };
   const deleteQuote = async (id) => {
-    try { await window.storage.delete(`roomquote:${id}`); setSaved((s) => s.filter((q) => q.id !== id)); } catch (e) {}
+    try {
+      await window.storage.delete(`roomquote:${id}`);
+      setSaved((s) => s.filter((q) => q.id !== id));
+      if (id === currentQuoteId) setCurrentQuoteId(null);
+    } catch (e) {}
+  };
+
+  const newQuote = () => {
+    setCurrentQuoteId(null);
+    setCustomer({ name: "", address: "", city: "", projectName: "", phone: "", date: new Date().toISOString().slice(0, 10) });
+    setFilmPresets(DEFAULT_FILM_PRESETS);
+    setFloors([{ id: uid(), name: "Main Floor", hidden: false, rooms: [{ id: uid(), name: "Living Room", photo: null, hidden: false, windows: [] }] }]);
+    setTripFee(0);
+    setTaxRate(13);
+    setAddOnPresets(DEFAULT_ADDON_PRESETS);
+    setAppliedAddOns([]);
+    setKmTraveled(0);
+    setFuelRatePerKm(0.5);
+    setStatus("Started a new quote.");
+    setTimeout(() => setStatus(""), 2500);
   };
 
   // Shared summary used by both the PDF export and the email body, so the two
@@ -824,7 +855,8 @@ export default function App() {
           </div>
           <div className="flex gap-2 print:hidden">
             <button onClick={() => setShowSaved(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "#242424", color: "#fff" }}><FolderOpen size={15} /> Saved ({saved.length})</button>
-            <button onClick={saveQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: TEAL, color: INK }}><Save size={15} /> Save</button>
+            <button onClick={newQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Plus size={15} /> New</button>
+            <button onClick={saveQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: TEAL, color: INK }}><Save size={15} /> {currentQuoteId ? "Update" : "Save"}</button>
             <button onClick={exportPDF} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Download size={15} /> PDF</button>
             <button onClick={emailQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Mail size={15} /> Email</button>
             <button onClick={exportQuickBooksCSV} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><FileSpreadsheet size={15} /> QuickBooks</button>
@@ -1229,8 +1261,16 @@ export default function App() {
       </div>
 
       {showSaved && (
-        <div className="fixed inset-0 z-50 flex justify-end print:hidden" style={{ background: "rgba(0,0,0,0.4)" }}>
-          <div style={{ background: "#fff", width: 360, maxWidth: "90vw" }} className="h-full p-5 overflow-y-auto">
+        <div
+          className="fixed inset-0 z-50 flex justify-end print:hidden"
+          style={{ background: "rgba(0,0,0,0.4)" }}
+          onClick={() => setShowSaved(false)}
+        >
+          <div
+            style={{ background: "#fff", width: 360, maxWidth: "90vw", boxSizing: "border-box" }}
+            className="h-full p-5 overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between mb-4">
               <SectionTitle>Saved Quotes</SectionTitle>
               <button onClick={() => setShowSaved(false)}><X size={18} /></button>
