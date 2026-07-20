@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Plus, Trash2, Save, FolderOpen, X, Printer, ChevronRight, Upload, Camera, Eye, EyeOff } from "lucide-react";
+import { Plus, Trash2, Save, FolderOpen, X, Printer, ChevronRight, Upload, Camera, Eye, EyeOff, Mail, Download } from "lucide-react";
+import jsPDF from "jspdf";
 
 const TEAL = "#00C9C8";
 const TEAL_DEEP = "#00918f";
@@ -562,6 +563,167 @@ export default function App() {
     try { await window.storage.delete(`roomquote:${id}`); setSaved((s) => s.filter((q) => q.id !== id)); } catch (e) {}
   };
 
+  // Shared summary used by both the PDF export and the email body, so the two
+  // always match and totals never drift.
+  const buildQuoteSummary = () => ({
+    date: new Date().toLocaleDateString("en-CA"),
+    customer,
+    floorLines: computed.floorSummaries.filter((fs) => !fs.hidden),
+    filmLines: Object.entries(computed.byFilm).map(([id, v]) => ({
+      label: filmPresets.find((f) => f.id === id)?.label || id,
+      sqft: v.sqft,
+      total: v.total,
+    })),
+    addonLines: appliedAddOns.map((a) => ({ name: a.name, total: addOnLineTotal(a) })),
+    grandSqft: computed.grandSqft,
+    materialsTotal: computed.grandTotal,
+    addonsTotal: addOnsTotal,
+    tripFee: parseFloat(tripFee) || 0,
+    fuelCost,
+    subtotal,
+    taxRate: parseFloat(taxRate) || 0,
+    tax,
+    total: finalTotal,
+  });
+
+  const exportPDF = () => {
+    const s = buildQuoteSummary();
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    let y = 20;
+
+    // Header band
+    doc.setFillColor(11, 15, 15);
+    doc.rect(0, 0, pageWidth, 32, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont(undefined, "bold");
+    doc.text("Obscured Vision Tints", 14, 15);
+    doc.setFontSize(9);
+    doc.setFont(undefined, "normal");
+    doc.setTextColor(0, 201, 200);
+    doc.text("FLAT GLASS QUOTE", 14, 22);
+    doc.setTextColor(180, 180, 180);
+    doc.text(s.date, pageWidth - 14, 15, { align: "right" });
+
+    y = 42;
+    doc.setTextColor(20, 20, 20);
+    doc.setFontSize(11);
+    doc.setFont(undefined, "bold");
+    doc.text("Customer", 14, y);
+    doc.setFont(undefined, "normal");
+    doc.setFontSize(10);
+    y += 6;
+    if (s.customer.name) { doc.text(s.customer.name, 14, y); y += 5; }
+    if (s.customer.address) { doc.text(s.customer.address, 14, y); y += 5; }
+    if (s.customer.phone) { doc.text(s.customer.phone, 14, y); y += 5; }
+
+    y += 6;
+    doc.setFont(undefined, "bold");
+    doc.setFontSize(11);
+    doc.text("Breakdown by Area", 14, y);
+    doc.setFont(undefined, "normal");
+    doc.setFontSize(10);
+    y += 7;
+    s.floorLines.forEach((fl) => {
+      doc.text(fl.name, 14, y);
+      doc.text(`${fl.sqft.toFixed(1)} sq ft`, 120, y);
+      doc.text(money(fl.total), pageWidth - 14, y, { align: "right" });
+      y += 6;
+    });
+
+    y += 4;
+    doc.setFont(undefined, "bold");
+    doc.setFontSize(11);
+    doc.text("By Film / Protection Type", 14, y);
+    doc.setFont(undefined, "normal");
+    doc.setFontSize(10);
+    y += 7;
+    s.filmLines.forEach((f) => {
+      doc.text(f.label, 14, y);
+      doc.text(`${f.sqft.toFixed(1)} sq ft`, 120, y);
+      doc.text(money(f.total), pageWidth - 14, y, { align: "right" });
+      y += 6;
+    });
+
+    if (s.addonLines.length > 0) {
+      y += 4;
+      doc.setFont(undefined, "bold");
+      doc.setFontSize(11);
+      doc.text("Add-Ons", 14, y);
+      doc.setFont(undefined, "normal");
+      doc.setFontSize(10);
+      y += 7;
+      s.addonLines.forEach((a) => {
+        doc.text(a.name, 14, y);
+        doc.text(money(a.total), pageWidth - 14, y, { align: "right" });
+        y += 6;
+      });
+    }
+
+    y += 6;
+    doc.setDrawColor(220, 220, 220);
+    doc.line(14, y, pageWidth - 14, y);
+    y += 8;
+
+    const totalsRow = (label, value, bold) => {
+      doc.setFont(undefined, bold ? "bold" : "normal");
+      doc.text(label, 14, y);
+      doc.text(value, pageWidth - 14, y, { align: "right" });
+      y += 6;
+    };
+    totalsRow("Materials + labor", money(s.materialsTotal));
+    totalsRow("Add-ons", money(s.addonsTotal));
+    totalsRow("Trip / setup fee", money(s.tripFee));
+    totalsRow("Fuel", money(s.fuelCost));
+    totalsRow("Subtotal", money(s.subtotal));
+    totalsRow(`Tax (${s.taxRate}%)`, money(s.tax));
+    y += 2;
+    doc.setDrawColor(11, 15, 15);
+    doc.line(14, y, pageWidth - 14, y);
+    y += 8;
+    doc.setFontSize(13);
+    totalsRow("TOTAL", money(s.total), true);
+
+    const filenameBase = (s.customer.name || "quote").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    doc.save(`ovt-quote-${filenameBase}-${s.date}.pdf`);
+  };
+
+  const emailQuote = () => {
+    const s = buildQuoteSummary();
+    const lines = [];
+    lines.push(`Obscured Vision Tints — Flat Glass Quote`);
+    lines.push(`Date: ${s.date}`);
+    if (s.customer.name) lines.push(`Customer: ${s.customer.name}`);
+    if (s.customer.address) lines.push(`Address: ${s.customer.address}`);
+    if (s.customer.phone) lines.push(`Phone: ${s.customer.phone}`);
+    lines.push("");
+    lines.push("Breakdown by Area:");
+    s.floorLines.forEach((fl) => lines.push(`  ${fl.name} — ${fl.sqft.toFixed(1)} sq ft — ${money(fl.total)}`));
+    lines.push("");
+    lines.push("By Film / Protection Type:");
+    s.filmLines.forEach((f) => lines.push(`  ${f.label} — ${f.sqft.toFixed(1)} sq ft — ${money(f.total)}`));
+    if (s.addonLines.length > 0) {
+      lines.push("");
+      lines.push("Add-Ons:");
+      s.addonLines.forEach((a) => lines.push(`  ${a.name} — ${money(a.total)}`));
+    }
+    lines.push("");
+    lines.push(`Materials + labor: ${money(s.materialsTotal)}`);
+    lines.push(`Add-ons: ${money(s.addonsTotal)}`);
+    lines.push(`Trip / setup fee: ${money(s.tripFee)}`);
+    lines.push(`Fuel: ${money(s.fuelCost)}`);
+    lines.push(`Subtotal: ${money(s.subtotal)}`);
+    lines.push(`Tax (${s.taxRate}%): ${money(s.tax)}`);
+    lines.push(`TOTAL: ${money(s.total)}`);
+    lines.push("");
+    lines.push("(Tip: tap \"Download PDF\" first if you'd like to attach a formatted quote to this email.)");
+
+    const subject = `Flat Glass Quote — ${s.customer.name || "Obscured Vision Tints"}`;
+    const body = lines.join("\n");
+    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  };
+
   return (
     <div style={{ background: PAPER, minHeight: "100vh", color: INK, fontFamily: "'Helvetica Neue', Arial, sans-serif" }}>
       <div style={{ background: INK, color: "#fff" }}>
@@ -576,6 +738,8 @@ export default function App() {
           <div className="flex gap-2 print:hidden">
             <button onClick={() => setShowSaved(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "#242424", color: "#fff" }}><FolderOpen size={15} /> Saved ({saved.length})</button>
             <button onClick={saveQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: TEAL, color: INK }}><Save size={15} /> Save</button>
+            <button onClick={exportPDF} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Download size={15} /> PDF</button>
+            <button onClick={emailQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Mail size={15} /> Email</button>
             <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Printer size={15} /> Print</button>
           </div>
         </div>
