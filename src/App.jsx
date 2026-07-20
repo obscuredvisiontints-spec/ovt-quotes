@@ -352,7 +352,7 @@ function CutLayoutView({ group }) {
 }
 
 export default function App() {
-  const [customer, setCustomer] = useState({ name: "", address: "", phone: "", date: new Date().toISOString().slice(0, 10) });
+  const [customer, setCustomer] = useState({ name: "", address: "", city: "", projectName: "", phone: "", date: new Date().toISOString().slice(0, 10) });
   const [filmPresets, setFilmPresets] = useState(DEFAULT_FILM_PRESETS);
   const [floors, setFloors] = useState([
     { id: uid(), name: "Main Floor", hidden: false, rooms: [{ id: uid(), name: "Living Room", photo: null, hidden: false, windows: [] }] },
@@ -593,7 +593,7 @@ export default function App() {
     }
   };
   const loadQuote = (q) => {
-    setCustomer(q.customer);
+    setCustomer({ name: "", address: "", city: "", projectName: "", phone: "", date: new Date().toISOString().slice(0, 10), ...q.customer });
     setFilmPresets(q.filmPresets || DEFAULT_FILM_PRESETS);
     setFloors(q.floors.map((fl) => ({ ...fl, hidden: !!fl.hidden, rooms: fl.rooms.map((r) => ({ ...r, hidden: !!r.hidden })) })));
     setTripFee(q.tripFee);
@@ -659,7 +659,9 @@ export default function App() {
     doc.setFontSize(10);
     y += 6;
     if (s.customer.name) { doc.text(s.customer.name, 14, y); y += 5; }
+    if (s.customer.projectName) { doc.text(`Project: ${s.customer.projectName}`, 14, y); y += 5; }
     if (s.customer.address) { doc.text(s.customer.address, 14, y); y += 5; }
+    if (s.customer.city) { doc.text(s.customer.city, 14, y); y += 5; }
     if (s.customer.phone) { doc.text(s.customer.phone, 14, y); y += 5; }
 
     y += 6;
@@ -738,7 +740,9 @@ export default function App() {
     lines.push(`Obscured Vision Tints — Flat Glass Quote`);
     lines.push(`Date: ${s.date}`);
     if (s.customer.name) lines.push(`Customer: ${s.customer.name}`);
+    if (s.customer.projectName) lines.push(`Project: ${s.customer.projectName}`);
     if (s.customer.address) lines.push(`Address: ${s.customer.address}`);
+    if (s.customer.city) lines.push(`City: ${s.customer.city}`);
     if (s.customer.phone) lines.push(`Phone: ${s.customer.phone}`);
     lines.push("");
     lines.push("Breakdown by Area:");
@@ -761,7 +765,7 @@ export default function App() {
     lines.push("");
     lines.push("(Tip: tap \"Download PDF\" first if you'd like to attach a formatted quote to this email.)");
 
-    const subject = `Flat Glass Quote — ${s.customer.name || "Obscured Vision Tints"}`;
+    const subject = `Flat Glass Quote — ${s.customer.name || "Obscured Vision Tints"}${s.customer.projectName ? ` (${s.customer.projectName})` : ""}`;
     const body = lines.join("\n");
     window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
@@ -839,6 +843,8 @@ export default function App() {
             <div className="grid grid-cols-2 gap-3 mt-3">
               <div><MiniLabel>Name</MiniLabel><input value={customer.name} onChange={(e) => setCustomer({ ...customer, name: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
               <div><MiniLabel>Phone</MiniLabel><input value={customer.phone} onChange={(e) => setCustomer({ ...customer, phone: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
+              <div><MiniLabel>Project Name</MiniLabel><input value={customer.projectName} onChange={(e) => setCustomer({ ...customer, projectName: e.target.value })} placeholder="e.g. Oshawa House" className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
+              <div><MiniLabel>City</MiniLabel><input value={customer.city} onChange={(e) => setCustomer({ ...customer, city: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
               <div className="col-span-2"><MiniLabel>Address</MiniLabel><input value={customer.address} onChange={(e) => setCustomer({ ...customer, address: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
             </div>
           </section>
@@ -1249,8 +1255,13 @@ export default function App() {
                         <Camera size={14} style={{ color: STEEL, flexShrink: 0 }} />
                       )}
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold truncate">{q.customer?.name || "Unnamed customer"}</div>
-                        <div className="text-xs" style={{ color: STEEL }}>{new Date(q.savedAt).toLocaleDateString()} &middot; {money(q.grandTotal)}</div>
+                        <div className="text-sm font-semibold truncate">
+                          {q.customer?.name || "Unnamed customer"}
+                          {q.customer?.projectName ? `, ${q.customer.projectName}` : ""}
+                        </div>
+                        <div className="text-xs" style={{ color: STEEL }}>
+                          {q.customer?.city ? `${q.customer.city} · ` : ""}{new Date(q.savedAt).toLocaleDateString()} &middot; {money(q.grandTotal)}
+                        </div>
                       </div>
                     </div>
                     <button
