@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Plus, Trash2, Save, FolderOpen, X, Printer, ChevronRight, Upload, Camera, Eye, EyeOff, Mail, Download } from "lucide-react";
+import { Plus, Trash2, Save, FolderOpen, X, Printer, ChevronRight, Upload, Camera, Eye, EyeOff, Mail, Download, FileSpreadsheet } from "lucide-react";
 import jsPDF from "jspdf";
 
 const TEAL = "#00C9C8";
@@ -526,7 +526,8 @@ export default function App() {
 
   const addOnsTotal = appliedAddOns.reduce((s, a) => s + addOnLineTotal(a), 0);
   const fuelCost = (parseFloat(kmTraveled) || 0) * (parseFloat(fuelRatePerKm) || 0);
-  const subtotal = computed.grandTotal + addOnsTotal + (parseFloat(tripFee) || 0) + fuelCost;
+  const travelTotal = (parseFloat(tripFee) || 0) + fuelCost;
+  const subtotal = computed.grandTotal + addOnsTotal + travelTotal;
   const tax = subtotal * ((parseFloat(taxRate) || 0) / 100);
   const finalTotal = subtotal + tax;
 
@@ -578,8 +579,7 @@ export default function App() {
     grandSqft: computed.grandSqft,
     materialsTotal: computed.grandTotal,
     addonsTotal: addOnsTotal,
-    tripFee: parseFloat(tripFee) || 0,
-    fuelCost,
+    travelTotal,
     subtotal,
     taxRate: parseFloat(taxRate) || 0,
     tax,
@@ -674,8 +674,7 @@ export default function App() {
     };
     totalsRow("Materials + labor", money(s.materialsTotal));
     totalsRow("Add-ons", money(s.addonsTotal));
-    totalsRow("Trip / setup fee", money(s.tripFee));
-    totalsRow("Fuel", money(s.fuelCost));
+    totalsRow("Travel", money(s.travelTotal));
     totalsRow("Subtotal", money(s.subtotal));
     totalsRow(`Tax (${s.taxRate}%)`, money(s.tax));
     y += 2;
@@ -711,8 +710,7 @@ export default function App() {
     lines.push("");
     lines.push(`Materials + labor: ${money(s.materialsTotal)}`);
     lines.push(`Add-ons: ${money(s.addonsTotal)}`);
-    lines.push(`Trip / setup fee: ${money(s.tripFee)}`);
-    lines.push(`Fuel: ${money(s.fuelCost)}`);
+    lines.push(`Travel: ${money(s.travelTotal)}`);
     lines.push(`Subtotal: ${money(s.subtotal)}`);
     lines.push(`Tax (${s.taxRate}%): ${money(s.tax)}`);
     lines.push(`TOTAL: ${money(s.total)}`);
@@ -722,6 +720,47 @@ export default function App() {
     const subject = `Flat Glass Quote — ${s.customer.name || "Obscured Vision Tints"}`;
     const body = lines.join("\n");
     window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  };
+
+  // QuickBooks Online has native CSV import for Invoices (Sales > Invoices > Import
+  // invoices), but NOT for Estimates — that needs a paid third-party app. So this
+  // exports in the Invoice column format instead, ready for once a quote is accepted.
+  // Two things to double check in QBO before importing: the Customer name below has
+  // to exactly match an existing customer record, and the Product/Service names
+  // (e.g. "Window Film Installation") need to exist in your QBO Products & Services
+  // list — QBO will reject rows for names it doesn't recognize.
+  const exportQuickBooksCSV = () => {
+    const s = buildQuoteSummary();
+    const invoiceNo = `OVT-${Date.now().toString().slice(-6)}`;
+    const customerName = s.customer.name || "New Customer";
+    const rows = [
+      ["Invoice No", "Customer", "Invoice Date", "Product/Service", "Product/Service Description", "Product/Service Quantity", "Product/Service Rate", "Product/Service Amount"],
+    ];
+    s.filmLines.forEach((f) => {
+      const rate = f.sqft > 0 ? f.total / f.sqft : 0;
+      rows.push([invoiceNo, customerName, s.date, "Window Film Installation", f.label, f.sqft.toFixed(2), rate.toFixed(2), f.total.toFixed(2)]);
+    });
+    s.addonLines.forEach((a) => {
+      rows.push([invoiceNo, customerName, s.date, "Add-On Service", a.name, "1", a.total.toFixed(2), a.total.toFixed(2)]);
+    });
+    if (s.travelTotal > 0) {
+      rows.push([invoiceNo, customerName, s.date, "Travel", "Trip / mileage charge", "1", s.travelTotal.toFixed(2), s.travelTotal.toFixed(2)]);
+    }
+    if (s.tax > 0) {
+      rows.push([invoiceNo, customerName, s.date, "Sales Tax", `Tax @ ${s.taxRate}%`, "1", s.tax.toFixed(2), s.tax.toFixed(2)]);
+    }
+
+    const csv = rows.map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const filenameBase = customerName.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    link.download = `ovt-quote-${filenameBase}-${s.date}-quickbooks.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -740,6 +779,7 @@ export default function App() {
             <button onClick={saveQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: TEAL, color: INK }}><Save size={15} /> Save</button>
             <button onClick={exportPDF} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Download size={15} /> PDF</button>
             <button onClick={emailQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Mail size={15} /> Email</button>
+            <button onClick={exportQuickBooksCSV} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><FileSpreadsheet size={15} /> QuickBooks</button>
             <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Printer size={15} /> Print</button>
           </div>
         </div>
@@ -1093,8 +1133,12 @@ export default function App() {
             )}
 
             <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }} className="p-5">
-              <SectionTitle>Travel / Fuel</SectionTitle>
-              <div className="grid grid-cols-2 gap-3 mt-3">
+              <SectionTitle>Travel</SectionTitle>
+              <div className="grid grid-cols-3 gap-3 mt-3">
+                <div>
+                  <MiniLabel>Base fee ($)</MiniLabel>
+                  <input type="number" value={tripFee} onChange={(e) => setTripFee(e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
+                </div>
                 <div>
                   <MiniLabel>Distance (km)</MiniLabel>
                   <input type="number" value={kmTraveled} onChange={(e) => setKmTraveled(e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
@@ -1105,8 +1149,8 @@ export default function App() {
                 </div>
               </div>
               <div className="flex justify-between mt-2 text-sm">
-                <span style={{ color: STEEL }}>Fuel charge</span>
-                <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700 }}>{money(fuelCost)}</span>
+                <span style={{ color: STEEL }}>Travel total</span>
+                <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700 }}>{money(travelTotal)}</span>
               </div>
             </div>
 
@@ -1116,11 +1160,7 @@ export default function App() {
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Total sq ft</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{computed.grandSqft.toFixed(2)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Materials + labor</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(computed.grandTotal)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Add-ons</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(addOnsTotal)}</span></div>
-                <div className="flex items-center justify-between">
-                  <span style={{ color: "#9ca3af" }}>Trip / setup fee</span>
-                  <input type="number" value={tripFee} onChange={(e) => setTripFee(e.target.value)} className="w-20 text-sm px-2 py-1 rounded text-right" style={{ background: "#242424", color: "#fff", border: "1px solid #3a3a3a" }} />
-                </div>
-                <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Fuel</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(fuelCost)}</span></div>
+                <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Travel</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(travelTotal)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Subtotal</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(subtotal)}</span></div>
                 <div className="flex items-center justify-between">
                   <span style={{ color: "#9ca3af" }}>Tax rate (%)</span>
