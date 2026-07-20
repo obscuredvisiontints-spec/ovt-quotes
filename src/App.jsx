@@ -52,6 +52,12 @@ const DEFAULT_ADDON_PRESETS = [
 const uid = () => Math.random().toString(36).slice(2, 10);
 const money = (n) => (isNaN(n) ? "$0.00" : n.toLocaleString("en-CA", { style: "currency", currency: "CAD" }));
 const sqftOf = (w) => ((parseFloat(w.width) || 0) * (parseFloat(w.length) || 0) / 144) * (parseInt(w.qty) || 0);
+const feetInches = (totalIn) => {
+  let feet = Math.floor(totalIn / 12);
+  let inches = Math.round(totalIn - feet * 12);
+  if (inches === 12) { feet += 1; inches = 0; }
+  return `${feet}' ${inches}"`;
+};
 
 // Shrinks a photo to a small JPEG before it's stored — full-resolution phone photos
 // (often 3-5MB each) would blow through localStorage's ~5-10MB quota after just a
@@ -1198,7 +1204,7 @@ export default function App() {
                   <div className="flex justify-between mt-2 text-sm">
                     <span style={{ color: STEEL }}>Length needed</span>
                     <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700 }}>
-                      {g.totalLengthIn.toFixed(1)}" ({(g.totalLengthIn / 36).toFixed(2)} yd)
+                      {g.totalLengthIn.toFixed(1)}" ({feetInches(g.totalLengthIn)})
                     </span>
                   </div>
                   <button
