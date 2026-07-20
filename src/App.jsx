@@ -53,6 +53,28 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const money = (n) => (isNaN(n) ? "$0.00" : n.toLocaleString("en-CA", { style: "currency", currency: "CAD" }));
 const sqftOf = (w) => ((parseFloat(w.width) || 0) * (parseFloat(w.length) || 0) / 144) * (parseInt(w.qty) || 0);
 
+// Shrinks a photo to a small JPEG before it's stored — full-resolution phone photos
+// (often 3-5MB each) would blow through localStorage's ~5-10MB quota after just a
+// couple of saved quotes. This keeps each photo down to roughly 40-120KB.
+function compressImage(dataUrl, maxWidth = 700, quality = 0.55) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxWidth / img.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
 const DEFAULT_ROLL_WIDTHS = [36, 48, 60, 72];
 
 // First-Fit Decreasing Height shelf packing: pieces already have {cross, length} in inches
@@ -188,11 +210,14 @@ function RoomCard({ room, filmPresets, onRename, onRemoveRoom, onAddWindow, onUp
     setActivePinId(id);
   };
 
-  const handleFile = (e) => {
+  const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => onPhoto(reader.result);
+    reader.onload = async () => {
+      const compressed = await compressImage(reader.result);
+      onPhoto(compressed);
+    };
     reader.readAsDataURL(file);
   };
 
@@ -358,7 +383,16 @@ export default function App() {
               try { const r = await window.storage.get(k); return r ? JSON.parse(r.value) : null; } catch { return null; }
             })
           );
-          setSaved(items.filter(Boolean).sort((a, b) => b.savedAt - a.savedAt));
+          const cutoff = Date.now() - THIRTY_DAYS_MS;
+          const fresh = [];
+          for (const q of items.filter(Boolean)) {
+            if (q.savedAt < cutoff) {
+              try { await window.storage.delete(`roomquote:${q.id}`); } catch (e) {}
+            } else {
+              fresh.push(q);
+            }
+          }
+          setSaved(fresh.sort((a, b) => b.savedAt - a.savedAt));
         }
       } catch (e) {}
     })();
@@ -534,18 +568,28 @@ export default function App() {
   const saveQuote = async () => {
     const quote = {
       id: uid(), savedAt: Date.now(), customer, filmPresets,
-      floors: floors.map((fl) => ({ ...fl, rooms: fl.rooms.map((r) => ({ ...r, photo: null })) })),
+      floors, // photos are already compressed on upload, so they're kept with the quote
       tripFee, taxRate, addOnPresets, appliedAddOns, kmTraveled, fuelRatePerKm,
       grandTotal: finalTotal,
     };
     try {
       await window.storage.set(`roomquote:${quote.id}`, JSON.stringify(quote));
       setSaved((s) => [quote, ...s]);
-      setStatus("Quote saved (photos aren't stored — re-attach if you reload).");
+      setStatus("Quote saved, photos included.");
       setTimeout(() => setStatus(""), 3500);
     } catch (e) {
-      setStatus("Save failed — try again.");
-      setTimeout(() => setStatus(""), 2500);
+      // Most likely storage is full (older browsers cap localStorage around 5-10MB).
+      // Retry once without photos so the quote itself isn't lost.
+      try {
+        const withoutPhotos = { ...quote, floors: quote.floors.map((fl) => ({ ...fl, rooms: fl.rooms.map((r) => ({ ...r, photo: null })) })) };
+        await window.storage.set(`roomquote:${quote.id}`, JSON.stringify(withoutPhotos));
+        setSaved((s) => [withoutPhotos, ...s]);
+        setStatus("Storage is full, so this quote saved without photos. Delete some older saved quotes to free up room.");
+        setTimeout(() => setStatus(""), 5000);
+      } catch (e2) {
+        setStatus("Save failed — storage may be full. Try deleting an older saved quote.");
+        setTimeout(() => setStatus(""), 3500);
+      }
     }
   };
   const loadQuote = (q) => {
@@ -1186,18 +1230,42 @@ export default function App() {
               <button onClick={() => setShowSaved(false)}><X size={18} /></button>
             </div>
             {saved.length === 0 && <div className="text-sm" style={{ color: STEEL }}>No saved quotes yet.</div>}
+            {saved.length > 0 && (
+              <div className="text-xs mb-3" style={{ color: STEEL }}>
+                Tap a quote to reopen it. Saved quotes older than 30 days are removed automatically.
+              </div>
+            )}
             <div className="space-y-2">
               {saved.map((q) => (
-                <div key={q.id} style={{ border: "1px solid #eee", borderRadius: 6 }} className="p-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-semibold">{q.customer?.name || "Unnamed customer"}</div>
-                      <div className="text-xs" style={{ color: STEEL }}>{new Date(q.savedAt).toLocaleDateString()} &middot; {money(q.grandTotal)}</div>
+                <div
+                  key={q.id}
+                  onClick={() => loadQuote(q)}
+                  style={{ border: "1px solid #eee", borderRadius: 6, cursor: "pointer" }}
+                  className="p-3 hover:bg-gray-50"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {q.floors?.some((fl) => fl.rooms?.some((r) => r.photo)) && (
+                        <Camera size={14} style={{ color: STEEL, flexShrink: 0 }} />
+                      )}
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold truncate">{q.customer?.name || "Unnamed customer"}</div>
+                        <div className="text-xs" style={{ color: STEEL }}>{new Date(q.savedAt).toLocaleDateString()} &middot; {money(q.grandTotal)}</div>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => loadQuote(q)} style={{ color: TEAL_DEEP }}><ChevronRight size={18} /></button>
-                      <button onClick={() => deleteQuote(q.id)} className="text-red-500"><Trash2 size={16} /></button>
-                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Delete the saved quote for ${q.customer?.name || "this customer"}? This can't be undone.`)) {
+                          deleteQuote(q.id);
+                        }
+                      }}
+                      className="text-red-500 p-2 flex-shrink-0"
+                      style={{ marginLeft: 8 }}
+                      title="Delete quote"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
                 </div>
               ))}
