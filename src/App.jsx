@@ -377,6 +377,47 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
+        const d = await window.storage.get("draft:current");
+        if (d && d.value) {
+          const draft = JSON.parse(d.value);
+          const hasContent = draft?.customer?.name || draft?.customer?.projectName || draft?.floors?.some((fl) => fl.rooms?.some((r) => r.windows?.length));
+          if (draft && hasContent) {
+            setCustomer((c) => ({ ...c, ...draft.customer }));
+            if (draft.filmPresets) setFilmPresets(draft.filmPresets);
+            if (draft.floors) setFloors(draft.floors);
+            if (draft.tripFee != null) setTripFee(draft.tripFee);
+            if (draft.taxRate != null) setTaxRate(draft.taxRate);
+            if (draft.addOnPresets) setAddOnPresets(draft.addOnPresets);
+            if (draft.appliedAddOns) setAppliedAddOns(draft.appliedAddOns);
+            if (draft.kmTraveled != null) setKmTraveled(draft.kmTraveled);
+            if (draft.fuelRatePerKm != null) setFuelRatePerKm(draft.fuelRatePerKm);
+            setCurrentQuoteId(draft.currentQuoteId || null);
+            setStatus("Picked up right where you left off.");
+            setTimeout(() => setStatus(""), 3000);
+          }
+        }
+      } catch (e) {}
+    })();
+  }, []);
+
+  // Auto-saves the in-progress quote to this device's storage a moment after
+  // every change, so backgrounding the app (a call comes in, you switch apps)
+  // never loses work — even if the OS fully closes the page in the background.
+  const draftTimeout = useRef(null);
+  useEffect(() => {
+    if (draftTimeout.current) clearTimeout(draftTimeout.current);
+    draftTimeout.current = setTimeout(async () => {
+      try {
+        const draft = { customer, filmPresets, floors, tripFee, taxRate, addOnPresets, appliedAddOns, kmTraveled, fuelRatePerKm, currentQuoteId, savedAt: Date.now() };
+        await window.storage.set("draft:current", JSON.stringify(draft));
+      } catch (e) {}
+    }, 800);
+    return () => clearTimeout(draftTimeout.current);
+  }, [customer, filmPresets, floors, tripFee, taxRate, addOnPresets, appliedAddOns, kmTraveled, fuelRatePerKm, currentQuoteId]);
+
+  useEffect(() => {
+    (async () => {
+      try {
         const res = await window.storage.list("roomquote:");
         if (res && res.keys) {
           const items = await Promise.all(
@@ -635,6 +676,7 @@ export default function App() {
     setAppliedAddOns([]);
     setKmTraveled(0);
     setFuelRatePerKm(0.5);
+    window.storage.delete("draft:current").catch(() => {});
     setStatus("Started a new quote.");
     setTimeout(() => setStatus(""), 2500);
   };
