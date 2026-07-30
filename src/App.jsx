@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Plus, Trash2, Save, FolderOpen, X, Printer, ChevronRight, Upload, Camera, Eye, EyeOff, Mail, Download, FileSpreadsheet, Copy, Settings } from "lucide-react";
+import { Plus, Trash2, Save, FolderOpen, X, Printer, ChevronRight, Eye, EyeOff, Mail, Download, FileSpreadsheet, Copy, Settings } from "lucide-react";
 import jsPDF from "jspdf";
 
 const TEAL = "#00C9C8";
@@ -64,26 +64,6 @@ const perimeterFt = (w) => {
   const length = parseFloat(w.length) || 0;
   return (2 * (width + length)) / 12;
 };
-
-// Shrinks a photo to a small JPEG before it's stored — full-resolution phone photos
-// (often 3-5MB each) would blow through localStorage's ~5-10MB quota after just a
-// couple of saved quotes. This keeps each photo down to roughly 40-120KB.
-function compressImage(dataUrl, maxWidth = 700, quality = 0.55) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, maxWidth / img.width);
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(img.width * scale);
-      canvas.height = Math.round(img.height * scale);
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL("image/jpeg", quality));
-    };
-    img.onerror = () => resolve(dataUrl);
-    img.src = dataUrl;
-  });
-}
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -268,10 +248,7 @@ function WindowRow({ w, idx, filmPresets, addOnPresets, onUpdate, onRemove, onDu
   );
 }
 
-function RoomCard({ room, filmPresets, addOnPresets, onRename, onRemoveRoom, onAddWindow, onUpdateWindow, onRemoveWindow, onDuplicateWindow, onToggleWindowHidden, onAddWindowAddOn, onUpdateWindowAddOn, onRemoveWindowAddOn, onPhoto, onToggleHidden }) {
-  const imgRef = useRef(null);
-  const [activePinId, setActivePinId] = useState(null);
-
+function RoomCard({ room, filmPresets, addOnPresets, onRename, onRemoveRoom, onAddWindow, onUpdateWindow, onRemoveWindow, onDuplicateWindow, onToggleWindowHidden, onAddWindowAddOn, onUpdateWindowAddOn, onRemoveWindowAddOn, onToggleHidden }) {
   const visibleWindows = room.windows.filter((w) => !w.hidden);
   const roomSqft = visibleWindows.reduce((s, w) => s + sqftOf(w), 0);
   const roomTotal = visibleWindows.reduce((s, w) => {
@@ -279,25 +256,6 @@ function RoomCard({ room, filmPresets, addOnPresets, onRename, onRemoveRoom, onA
     const addOnsTotal = (w.addOns || []).reduce((a, line) => a + addOnLineTotal(line), 0);
     return s + sqftOf(w) * rate + addOnsTotal;
   }, 0);
-
-  const handlePhotoClick = (e) => {
-    const rect = imgRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    const id = onAddWindow({ x, y });
-    setActivePinId(id);
-  };
-
-  const handleFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const compressed = await compressImage(reader.result);
-      onPhoto(compressed);
-    };
-    reader.readAsDataURL(file);
-  };
 
   if (room.hidden) {
     return (
@@ -331,31 +289,6 @@ function RoomCard({ room, filmPresets, addOnPresets, onRename, onRemoveRoom, onA
         <button onClick={onRemoveRoom} className="text-red-500 p-1"><Trash2 size={14} /></button>
       </div>
 
-      {room.photo ? (
-        <div style={{ position: "relative", borderRadius: 6, overflow: "hidden", border: "1px solid #e5e7eb" }} className="mb-3">
-          <img ref={imgRef} src={room.photo} onClick={handlePhotoClick} alt={room.name} style={{ width: "100%", display: "block", cursor: "crosshair" }} />
-          {room.windows.filter((w) => w.x != null).map((w, idx) => (
-            <button
-              key={w.id}
-              onClick={(e) => { e.stopPropagation(); setActivePinId(w.id === activePinId ? null : w.id); }}
-              style={{
-                position: "absolute", left: `${w.x}%`, top: `${w.y}%`, transform: "translate(-50%, -100%) rotate(-45deg)",
-                background: w.id === activePinId ? TEAL : INK, color: "#fff", border: "2px solid #fff",
-                borderRadius: "50% 50% 50% 0", width: 24, height: 24, display: "flex", alignItems: "center",
-                justifyContent: "center", fontSize: 10, fontWeight: 800, boxShadow: "0 1px 4px rgba(0,0,0,0.4)",
-              }}
-            >
-              <span style={{ transform: "rotate(45deg)" }}>{room.windows.indexOf(w) + 1}</span>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <label className="flex items-center justify-center gap-2 cursor-pointer text-xs font-semibold mb-3 py-2 rounded" style={{ border: "1px dashed #ccc", color: STEEL }}>
-          <Camera size={13} /> Add photo (optional)
-          <input type="file" accept="image/*" className="hidden" onChange={handleFile} />
-        </label>
-      )}
-
       <div className="space-y-2">
         {room.windows.map((w, idx) => (
           <WindowRow
@@ -364,7 +297,6 @@ function RoomCard({ room, filmPresets, addOnPresets, onRename, onRemoveRoom, onA
             idx={idx}
             filmPresets={filmPresets}
             addOnPresets={addOnPresets}
-            highlighted={w.id === activePinId}
             onUpdate={(field, value) => onUpdateWindow(w.id, field, value)}
             onRemove={() => onRemoveWindow(w.id)}
             onDuplicate={() => onDuplicateWindow(w.id)}
@@ -439,7 +371,7 @@ export default function App() {
   const [customer, setCustomer] = useState({ name: "", address: "", city: "", projectName: "", phone: "", email: "", date: new Date().toISOString().slice(0, 10) });
   const [filmPresets, setFilmPresets] = useState(DEFAULT_FILM_PRESETS);
   const [floors, setFloors] = useState([
-    { id: uid(), name: "Main Floor", hidden: false, rooms: [{ id: uid(), name: "Living Room", photo: null, hidden: false, windows: [] }] },
+    { id: uid(), name: "Main Floor", hidden: false, rooms: [{ id: uid(), name: "Living Room", hidden: false, windows: [] }] },
   ]);
   const [tripFee, setTripFee] = useState(0);
   const [taxRate, setTaxRate] = useState(13);
@@ -521,6 +453,22 @@ export default function App() {
     return () => clearTimeout(businessInfoTimeout.current);
   }, [businessInfo]);
 
+  // Your price list (film rates and add-on rates) works the same way — edits
+  // made in those settings sections become your permanent default going
+  // forward, independent of any single quote.
+  useEffect(() => {
+    (async () => {
+      try {
+        const fp = await window.storage.get("pricelist:film");
+        if (fp && fp.value) setFilmPresets(JSON.parse(fp.value));
+      } catch (e) {}
+      try {
+        const ap = await window.storage.get("pricelist:addons");
+        if (ap && ap.value) setAddOnPresets(JSON.parse(ap.value));
+      } catch (e) {}
+    })();
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
@@ -546,21 +494,19 @@ export default function App() {
     })();
   }, []);
 
-  const addFloor = () => setFloors((f) => [...f, { id: uid(), name: `Floor ${f.length + 1}`, hidden: false, rooms: [{ id: uid(), name: "Room 1", photo: null, hidden: false, windows: [] }] }]);
+  const addFloor = () => setFloors((f) => [...f, { id: uid(), name: `Floor ${f.length + 1}`, hidden: false, rooms: [{ id: uid(), name: "Room 1", hidden: false, windows: [] }] }]);
   const removeFloor = (id) => setFloors((f) => f.filter((fl) => fl.id !== id));
   const renameFloor = (id, name) => setFloors((f) => f.map((fl) => (fl.id === id ? { ...fl, name } : fl)));
   const toggleFloorHidden = (id) => setFloors((f) => f.map((fl) => (fl.id === id ? { ...fl, hidden: !fl.hidden } : fl)));
 
   const addRoom = (floorId) =>
-    setFloors((f) => f.map((fl) => (fl.id === floorId ? { ...fl, rooms: [...fl.rooms, { id: uid(), name: `Room ${fl.rooms.length + 1}`, photo: null, hidden: false, windows: [] }] } : fl)));
+    setFloors((f) => f.map((fl) => (fl.id === floorId ? { ...fl, rooms: [...fl.rooms, { id: uid(), name: `Room ${fl.rooms.length + 1}`, hidden: false, windows: [] }] } : fl)));
   const removeRoom = (floorId, roomId) =>
     setFloors((f) => f.map((fl) => (fl.id === floorId ? { ...fl, rooms: fl.rooms.filter((r) => r.id !== roomId) } : fl)));
   const toggleRoomHidden = (floorId, roomId) =>
     setFloors((f) => f.map((fl) => (fl.id === floorId ? { ...fl, rooms: fl.rooms.map((r) => (r.id === roomId ? { ...r, hidden: !r.hidden } : r)) } : fl)));
   const renameRoom = (floorId, roomId, name) =>
     setFloors((f) => f.map((fl) => (fl.id === floorId ? { ...fl, rooms: fl.rooms.map((r) => (r.id === roomId ? { ...r, name } : r)) } : fl)));
-  const setRoomPhoto = (floorId, roomId, photo) =>
-    setFloors((f) => f.map((fl) => (fl.id === floorId ? { ...fl, rooms: fl.rooms.map((r) => (r.id === roomId ? { ...r, photo } : r)) } : fl)));
 
   const addWindow = (floorId, roomId, pin) => {
     const id = uid();
@@ -697,15 +643,17 @@ export default function App() {
       )
     );
 
-  const updateFilmPreset = (id, field, value) => setFilmPresets((fp) => fp.map((f) => (f.id === id ? { ...f, [field]: value } : f)));
-  const addFilmPreset = (group) => setFilmPresets((fp) => [...fp, { id: uid(), group, label: "New Option", products: "", rate: 0 }]);
-  const removeFilmPreset = (id) => setFilmPresets((fp) => fp.filter((f) => f.id !== id));
+  const persistFilmPresets = (list) => { window.storage.set("pricelist:film", JSON.stringify(list)).catch(() => {}); };
+  const updateFilmPreset = (id, field, value) => setFilmPresets((fp) => { const next = fp.map((f) => (f.id === id ? { ...f, [field]: value } : f)); persistFilmPresets(next); return next; });
+  const addFilmPreset = (group) => setFilmPresets((fp) => { const next = [...fp, { id: uid(), group, label: "New Option", products: "", rate: 0 }]; persistFilmPresets(next); return next; });
+  const removeFilmPreset = (id) => setFilmPresets((fp) => { const next = fp.filter((f) => f.id !== id); persistFilmPresets(next); return next; });
 
   const updateRollWidth = (idx, value) => setRollWidths((rw) => rw.map((w, i) => (i === idx ? value : w)));
 
-  const updateAddOnPreset = (id, field, value) => setAddOnPresets((ap) => ap.map((a) => (a.id === id ? { ...a, [field]: value } : a)));
-  const addAddOnPreset = () => setAddOnPresets((ap) => [...ap, { id: uid(), name: "New Add-On", unit: "flat", rate: 0, note: "" }]);
-  const removeAddOnPreset = (id) => setAddOnPresets((ap) => ap.filter((a) => a.id !== id));
+  const persistAddOnPresets = (list) => { window.storage.set("pricelist:addons", JSON.stringify(list)).catch(() => {}); };
+  const updateAddOnPreset = (id, field, value) => setAddOnPresets((ap) => { const next = ap.map((a) => (a.id === id ? { ...a, [field]: value } : a)); persistAddOnPresets(next); return next; });
+  const addAddOnPreset = () => setAddOnPresets((ap) => { const next = [...ap, { id: uid(), name: "New Add-On", unit: "flat", rate: 0, note: "" }]; persistAddOnPresets(next); return next; });
+  const removeAddOnPreset = (id) => setAddOnPresets((ap) => { const next = ap.filter((a) => a.id !== id); persistAddOnPresets(next); return next; });
 
   const addAppliedAddOn = (presetId) => {
     const preset = addOnPresets.find((a) => a.id === presetId);
@@ -827,7 +775,7 @@ export default function App() {
     const isUpdate = !!currentQuoteId;
     const quote = {
       id, savedAt: Date.now(), customer, filmPresets,
-      floors, // photos are already compressed on upload, so they're kept with the quote
+      floors,
       tripFee, taxRate, addOnPresets, appliedAddOns, kmTraveled, fuelRatePerKm,
       grandTotal: finalTotal,
     };
@@ -838,25 +786,11 @@ export default function App() {
         return [quote, ...rest];
       });
       setCurrentQuoteId(id);
-      setStatus(isUpdate ? "Quote updated." : "Quote saved, photos included.");
+      setStatus(isUpdate ? "Quote updated." : "Quote saved.");
       setTimeout(() => setStatus(""), 3500);
     } catch (e) {
-      // Most likely storage is full (older browsers cap localStorage around 5-10MB).
-      // Retry once without photos so the quote itself isn't lost.
-      try {
-        const withoutPhotos = { ...quote, floors: quote.floors.map((fl) => ({ ...fl, rooms: fl.rooms.map((r) => ({ ...r, photo: null })) })) };
-        await window.storage.set(`roomquote:${id}`, JSON.stringify(withoutPhotos));
-        setSaved((s) => {
-          const rest = s.filter((q) => q.id !== id);
-          return [withoutPhotos, ...rest];
-        });
-        setCurrentQuoteId(id);
-        setStatus("Storage is full, so this quote saved without photos. Delete some older saved quotes to free up room.");
-        setTimeout(() => setStatus(""), 5000);
-      } catch (e2) {
-        setStatus("Save failed — storage may be full. Try deleting an older saved quote.");
-        setTimeout(() => setStatus(""), 3500);
-      }
+      setStatus("Save failed — storage may be full. Try deleting an older saved quote.");
+      setTimeout(() => setStatus(""), 3500);
     }
   };
   const loadQuote = (q) => {
@@ -880,17 +814,26 @@ export default function App() {
     } catch (e) {}
   };
 
-  const newQuote = () => {
+  const newQuote = async () => {
     setCurrentQuoteId(null);
     setCustomer({ name: "", address: "", city: "", projectName: "", phone: "", email: "", date: new Date().toISOString().slice(0, 10) });
-    setFilmPresets(DEFAULT_FILM_PRESETS);
-    setFloors([{ id: uid(), name: "Main Floor", hidden: false, rooms: [{ id: uid(), name: "Living Room", photo: null, hidden: false, windows: [] }] }]);
+    setFloors([{ id: uid(), name: "Main Floor", hidden: false, rooms: [{ id: uid(), name: "Living Room", hidden: false, windows: [] }] }]);
     setTripFee(0);
     setTaxRate(13);
-    setAddOnPresets(DEFAULT_ADDON_PRESETS);
     setAppliedAddOns([]);
     setKmTraveled(0);
     setFuelRatePerKm(0.5);
+    // Pull your actual saved default rates here (not the hardcoded originals) —
+    // this matters if you just had an older quote open, since that quote's
+    // rates were only a historical snapshot, not your current price list.
+    try {
+      const fp = await window.storage.get("pricelist:film");
+      setFilmPresets(fp && fp.value ? JSON.parse(fp.value) : DEFAULT_FILM_PRESETS);
+    } catch (e) { setFilmPresets(DEFAULT_FILM_PRESETS); }
+    try {
+      const ap = await window.storage.get("pricelist:addons");
+      setAddOnPresets(ap && ap.value ? JSON.parse(ap.value) : DEFAULT_ADDON_PRESETS);
+    } catch (e) { setAddOnPresets(DEFAULT_ADDON_PRESETS); }
     window.storage.delete("draft:current").catch(() => {});
     setStatus("Started a new quote.");
     setTimeout(() => setStatus(""), 2500);
@@ -1232,7 +1175,6 @@ export default function App() {
                       onAddWindowAddOn={(winId, presetId) => addWindowAddOn(fl.id, r.id, winId, presetId)}
                       onUpdateWindowAddOn={(winId, addOnId, field, value) => updateWindowAddOn(fl.id, r.id, winId, addOnId, field, value)}
                       onRemoveWindowAddOn={(winId, addOnId) => removeWindowAddOn(fl.id, r.id, winId, addOnId)}
-                      onPhoto={(photo) => setRoomPhoto(fl.id, r.id, photo)}
                       onToggleHidden={() => toggleRoomHidden(fl.id, r.id)}
                     />
                   ))}
@@ -1623,9 +1565,6 @@ export default function App() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 min-w-0">
-                      {q.floors?.some((fl) => fl.rooms?.some((r) => r.photo)) && (
-                        <Camera size={14} style={{ color: STEEL, flexShrink: 0 }} />
-                      )}
                       <div className="min-w-0">
                         <div className="text-sm font-semibold truncate">
                           {q.customer?.name || "Unnamed customer"}
