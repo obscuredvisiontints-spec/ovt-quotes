@@ -174,23 +174,23 @@ function WindowRow({ w, idx, filmPresets, addOnPresets, onUpdate, onRemove, onDu
             {idx + 1}
           </div>
         </div>
-        <div className="col-span-3">
+        <div className="col-span-4">
           <MiniLabel>Width (in)</MiniLabel>
           <input type="number" value={w.width} onChange={(e) => onUpdate("width", e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
         </div>
-        <div className="col-span-3">
+        <div className="col-span-4">
           <MiniLabel>Length (in)</MiniLabel>
           <input type="number" value={w.length} onChange={(e) => onUpdate("length", e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
         </div>
-        <div className="col-span-2">
+        <div className="col-span-3">
           <MiniLabel>Qty</MiniLabel>
           <input type="number" value={w.qty} onChange={(e) => onUpdate("qty", e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
         </div>
-        <div className="col-span-3 flex justify-end gap-1">
-          <button onClick={onDuplicate} className="p-1.5" style={{ color: TEAL_DEEP }} title="Duplicate this window"><Copy size={15} /></button>
-          <button onClick={onToggleHidden} className="p-1.5" style={{ color: STEEL }} title="Hide window"><EyeOff size={15} /></button>
-          <button onClick={onRemove} className="text-red-500 p-1.5" title="Delete window"><Trash2 size={15} /></button>
-        </div>
+      </div>
+      <div className="flex items-center justify-end gap-3 mt-2 pt-1.5" style={{ borderTop: "1px solid #f3f4f6" }}>
+        <button onClick={onDuplicate} className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5" style={{ color: TEAL_DEEP }} title="Duplicate this window"><Copy size={14} /> Duplicate</button>
+        <button onClick={onToggleHidden} className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5" style={{ color: STEEL }} title="Hide window"><EyeOff size={14} /> Hide</button>
+        <button onClick={onRemove} className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 text-red-500" title="Delete window"><Trash2 size={14} /> Delete</button>
       </div>
       <div className="mt-2">
         <MiniLabel>Film / Protection Type</MiniLabel>
@@ -436,7 +436,7 @@ function CutLayoutView({ group }) {
 }
 
 export default function App() {
-  const [customer, setCustomer] = useState({ name: "", address: "", city: "", projectName: "", phone: "", date: new Date().toISOString().slice(0, 10) });
+  const [customer, setCustomer] = useState({ name: "", address: "", city: "", projectName: "", phone: "", email: "", date: new Date().toISOString().slice(0, 10) });
   const [filmPresets, setFilmPresets] = useState(DEFAULT_FILM_PRESETS);
   const [floors, setFloors] = useState([
     { id: uid(), name: "Main Floor", hidden: false, rooms: [{ id: uid(), name: "Living Room", photo: null, hidden: false, windows: [] }] },
@@ -459,6 +459,7 @@ export default function App() {
   const [currentQuoteId, setCurrentQuoteId] = useState(null);
   const [businessInfo, setBusinessInfo] = useState({ phone: "", email: "", website: "obscuredvisiontints.ca" });
   const [showBusinessInfo, setShowBusinessInfo] = useState(false);
+  const [showFilmPriceList, setShowFilmPriceList] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -860,7 +861,7 @@ export default function App() {
   };
   const loadQuote = (q) => {
     setCurrentQuoteId(q.id);
-    setCustomer({ name: "", address: "", city: "", projectName: "", phone: "", date: new Date().toISOString().slice(0, 10), ...q.customer });
+    setCustomer({ name: "", address: "", city: "", projectName: "", phone: "", email: "", date: new Date().toISOString().slice(0, 10), ...q.customer });
     setFilmPresets(q.filmPresets || DEFAULT_FILM_PRESETS);
     setFloors(q.floors.map((fl) => ({ ...fl, hidden: !!fl.hidden, rooms: fl.rooms.map((r) => ({ ...r, hidden: !!r.hidden })) })));
     setTripFee(q.tripFee);
@@ -881,7 +882,7 @@ export default function App() {
 
   const newQuote = () => {
     setCurrentQuoteId(null);
-    setCustomer({ name: "", address: "", city: "", projectName: "", phone: "", date: new Date().toISOString().slice(0, 10) });
+    setCustomer({ name: "", address: "", city: "", projectName: "", phone: "", email: "", date: new Date().toISOString().slice(0, 10) });
     setFilmPresets(DEFAULT_FILM_PRESETS);
     setFloors([{ id: uid(), name: "Main Floor", hidden: false, rooms: [{ id: uid(), name: "Living Room", photo: null, hidden: false, windows: [] }] }]);
     setTripFee(0);
@@ -959,6 +960,7 @@ export default function App() {
     if (s.customer.address) { doc.text(s.customer.address, 14, y); y += 5; }
     if (s.customer.city) { doc.text(s.customer.city, 14, y); y += 5; }
     if (s.customer.phone) { doc.text(s.customer.phone, 14, y); y += 5; }
+    if (s.customer.email) { doc.text(s.customer.email, 14, y); y += 5; }
 
     y += 6;
     doc.setFont(undefined, "bold");
@@ -1058,6 +1060,7 @@ export default function App() {
     if (s.customer.address) lines.push(`Address: ${s.customer.address}`);
     if (s.customer.city) lines.push(`City: ${s.customer.city}`);
     if (s.customer.phone) lines.push(`Phone: ${s.customer.phone}`);
+    if (s.customer.email) lines.push(`Email: ${s.customer.email}`);
     lines.push("");
     lines.push("Breakdown by Area:");
     s.floorLines.forEach((fl) => lines.push(`  ${fl.name} — ${fl.sqft.toFixed(1)} sq ft — ${money(fl.total)}`));
@@ -1173,9 +1176,10 @@ export default function App() {
             <div className="grid grid-cols-2 gap-3 mt-3">
               <div><MiniLabel>Name</MiniLabel><input value={customer.name} onChange={(e) => setCustomer({ ...customer, name: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
               <div><MiniLabel>Phone</MiniLabel><input value={customer.phone} onChange={(e) => setCustomer({ ...customer, phone: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
+              <div><MiniLabel>Email</MiniLabel><input value={customer.email} onChange={(e) => setCustomer({ ...customer, email: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
               <div><MiniLabel>Project Name</MiniLabel><input value={customer.projectName} onChange={(e) => setCustomer({ ...customer, projectName: e.target.value })} placeholder="e.g. Oshawa House" className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
-              <div><MiniLabel>City</MiniLabel><input value={customer.city} onChange={(e) => setCustomer({ ...customer, city: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
               <div className="col-span-2"><MiniLabel>Address</MiniLabel><input value={customer.address} onChange={(e) => setCustomer({ ...customer, address: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
+              <div className="col-span-2"><MiniLabel>City</MiniLabel><input value={customer.city} onChange={(e) => setCustomer({ ...customer, city: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} /></div>
             </div>
           </section>
 
@@ -1248,43 +1252,6 @@ export default function App() {
           <button onClick={addFloor} className="w-full flex items-center justify-center gap-2 text-sm font-semibold py-3 rounded" style={{ background: "#fff", color: TEAL_DEEP, border: `1px dashed ${TEAL}` }}>
             <Plus size={16} /> Add Floor
           </button>
-
-          <section style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }} className="p-5">
-            <SectionTitle>Film & Protection Price List</SectionTitle>
-            <div className="text-xs mt-1" style={{ color: STEEL }}>Edit rates, labels, or the product list any time — add or delete options as your lineup changes.</div>
-
-            {["Film", "Protection"].map((groupName) => (
-              <div key={groupName} className="mt-4">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold uppercase" style={{ color: TEAL_DEEP, letterSpacing: 1 }}>{groupName}</div>
-                  <button onClick={() => addFilmPreset(groupName)} className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded" style={{ background: PAPER, color: TEAL_DEEP, border: `1px solid ${TEAL}` }}>
-                    <Plus size={12} /> Add
-                  </button>
-                </div>
-                <div className="space-y-2 mt-2">
-                  {filmPresets.filter((f) => f.group === groupName).map((f) => (
-                    <div key={f.id} className="grid grid-cols-12 gap-2 items-end p-2" style={{ border: "1px solid #eee", borderRadius: 6 }}>
-                      <div className="col-span-3">
-                        <MiniLabel>Rate ($/sq ft)</MiniLabel>
-                        <input type="number" step="0.25" value={f.rate} onChange={(e) => updateFilmPreset(f.id, "rate", parseFloat(e.target.value) || 0)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
-                      </div>
-                      <div className="col-span-3">
-                        <MiniLabel>Label</MiniLabel>
-                        <input value={f.label} onChange={(e) => updateFilmPreset(f.id, "label", e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
-                      </div>
-                      <div className="col-span-5">
-                        <MiniLabel>Products</MiniLabel>
-                        <input value={f.products} onChange={(e) => updateFilmPreset(f.id, "products", e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
-                      </div>
-                      <div className="col-span-1 flex justify-end">
-                        <button onClick={() => removeFilmPreset(f.id)} className="text-red-500 p-1.5"><Trash2 size={15} /></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </section>
 
           <section style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }} className="p-5">
             <SectionTitle>Add-Ons & Extra Charges</SectionTitle>
@@ -1577,6 +1544,52 @@ export default function App() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-6 pb-8 print:hidden">
+        <section style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }} className="p-5">
+          <button onClick={() => setShowFilmPriceList((s) => !s)} className="w-full flex items-center justify-between">
+            <SectionTitle>Film & Protection Price List</SectionTitle>
+            <span className="text-xs font-semibold" style={{ color: TEAL_DEEP }}>{showFilmPriceList ? "Hide" : "Show"}</span>
+          </button>
+          {showFilmPriceList && (
+            <>
+              <div className="text-xs mt-1" style={{ color: STEEL }}>Edit rates, labels, or the product list any time — add or delete options as your lineup changes.</div>
+
+              {["Film", "Protection"].map((groupName) => (
+                <div key={groupName} className="mt-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-bold uppercase" style={{ color: TEAL_DEEP, letterSpacing: 1 }}>{groupName}</div>
+                    <button onClick={() => addFilmPreset(groupName)} className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded" style={{ background: PAPER, color: TEAL_DEEP, border: `1px solid ${TEAL}` }}>
+                      <Plus size={12} /> Add
+                    </button>
+                  </div>
+                  <div className="space-y-2 mt-2">
+                    {filmPresets.filter((f) => f.group === groupName).map((f) => (
+                      <div key={f.id} className="grid grid-cols-12 gap-2 items-end p-2" style={{ border: "1px solid #eee", borderRadius: 6 }}>
+                        <div className="col-span-3">
+                          <MiniLabel>Rate ($/sq ft)</MiniLabel>
+                          <input type="number" step="0.25" value={f.rate} onChange={(e) => updateFilmPreset(f.id, "rate", parseFloat(e.target.value) || 0)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
+                        </div>
+                        <div className="col-span-3">
+                          <MiniLabel>Label</MiniLabel>
+                          <input value={f.label} onChange={(e) => updateFilmPreset(f.id, "label", e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
+                        </div>
+                        <div className="col-span-5">
+                          <MiniLabel>Products</MiniLabel>
+                          <input value={f.products} onChange={(e) => updateFilmPreset(f.id, "products", e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
+                        </div>
+                        <div className="col-span-1 flex justify-end">
+                          <button onClick={() => removeFilmPreset(f.id)} className="text-red-500 p-1.5"><Trash2 size={15} /></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </section>
       </div>
 
       {showSaved && (
