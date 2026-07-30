@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Plus, Trash2, Save, FolderOpen, X, Printer, ChevronRight, Upload, Camera, Eye, EyeOff, Mail, Download, FileSpreadsheet } from "lucide-react";
+import { Plus, Trash2, Save, FolderOpen, X, Printer, ChevronRight, Upload, Camera, Eye, EyeOff, Mail, Download, FileSpreadsheet, Copy, Settings } from "lucide-react";
 import jsPDF from "jspdf";
 
 const TEAL = "#00C9C8";
@@ -38,6 +38,7 @@ const UNIT_QTY_LABELS = {
 
 const DEFAULT_ADDON_PRESETS = [
   { id: "wet-glaze", name: "Structural Attachment (Wet Glaze)", unit: "linear_ft", rate: 7.50, note: "$6.50–$8.50 per linear ft" },
+  { id: "ext-silicone", name: "Exterior Silicone Caulking", unit: "linear_ft", rate: 5.00, note: "$4–$6 per linear ft" },
   { id: "removal-only", name: "Removal Only", unit: "sqft", rate: 6.00, note: "" },
   { id: "removal-retint", name: "Removal & Retint", unit: "sqft", rate: 4.00, note: "" },
   { id: "ladder", name: "Ladder Required", unit: "flat", rate: 100, note: "" },
@@ -57,6 +58,11 @@ const feetInches = (totalIn) => {
   let inches = Math.round(totalIn - feet * 12);
   if (inches === 12) { feet += 1; inches = 0; }
   return `${feet}' ${inches}"`;
+};
+const perimeterFt = (w) => {
+  const width = parseFloat(w.width) || 0;
+  const length = parseFloat(w.length) || 0;
+  return (2 * (width + length)) / 12;
 };
 
 // Shrinks a photo to a small JPEG before it's stored — full-resolution phone photos
@@ -134,13 +140,32 @@ function MiniLabel({ children }) {
   return <div style={{ fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: STEEL }} className="mb-1">{children}</div>;
 }
 
-function WindowRow({ w, idx, filmPresets, onUpdate, onRemove, highlighted }) {
+function WindowRow({ w, idx, filmPresets, addOnPresets, onUpdate, onRemove, onDuplicate, onToggleHidden, onAddAddOn, onUpdateAddOn, onRemoveAddOn, highlighted }) {
   const sqft = sqftOf(w);
   const preset = filmPresets.find((f) => f.id === w.film);
   const rate = preset?.rate || 0;
-  const total = sqft * rate;
+  const filmTotal = sqft * rate;
+  const windowAddOns = w.addOns || [];
+  const addOnsTotal = windowAddOns.reduce((s, a) => s + addOnLineTotal(a), 0);
+  const total = filmTotal + addOnsTotal;
   const filmGroup = filmPresets.filter((f) => f.group === "Film");
   const protectionGroup = filmPresets.filter((f) => f.group === "Protection");
+  const perim = perimeterFt(w);
+
+  if (w.hidden) {
+    return (
+      <div style={{ border: "1px dashed #ddd", borderRadius: 6, background: "#fafafa" }} className="px-2.5 py-2 flex items-center justify-between">
+        <span className="text-xs font-semibold" style={{ color: STEEL }}>Window {idx + 1} <span className="font-normal">(hidden — excluded from totals)</span></span>
+        <div className="flex items-center gap-1">
+          <button onClick={onToggleHidden} className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded" style={{ background: "#fff", color: TEAL_DEEP, border: `1px solid ${TEAL}` }}>
+            <Eye size={12} /> Show
+          </button>
+          <button onClick={onRemove} className="text-red-500 p-1"><Trash2 size={13} /></button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ border: `1px solid ${highlighted ? TEAL : "#eee"}`, borderRadius: 6, background: highlighted ? "#f0fffe" : "#fff" }} className="p-2.5">
       <div className="grid grid-cols-12 gap-2 items-end">
@@ -161,8 +186,10 @@ function WindowRow({ w, idx, filmPresets, onUpdate, onRemove, highlighted }) {
           <MiniLabel>Qty</MiniLabel>
           <input type="number" value={w.qty} onChange={(e) => onUpdate("qty", e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
         </div>
-        <div className="col-span-1 flex justify-end">
-          <button onClick={onRemove} className="text-red-500 p-1.5"><Trash2 size={15} /></button>
+        <div className="col-span-3 flex justify-end gap-1">
+          <button onClick={onDuplicate} className="p-1.5" style={{ color: TEAL_DEEP }} title="Duplicate this window"><Copy size={15} /></button>
+          <button onClick={onToggleHidden} className="p-1.5" style={{ color: STEEL }} title="Hide window"><EyeOff size={15} /></button>
+          <button onClick={onRemove} className="text-red-500 p-1.5" title="Delete window"><Trash2 size={15} /></button>
         </div>
       </div>
       <div className="mt-2">
@@ -190,22 +217,67 @@ function WindowRow({ w, idx, filmPresets, onUpdate, onRemove, highlighted }) {
           style={{ borderColor: "#ddd" }}
         />
       </div>
+
+      {sqft > 0 && (
+        <div className="text-xs mt-1.5" style={{ color: STEEL }}>
+          Perimeter: {perim.toFixed(1)} linear ft (for caulking / silicone)
+        </div>
+      )}
+
+      <div className="mt-2.5" style={{ borderTop: "1px dashed #e5e7eb", paddingTop: 8 }}>
+        <div className="flex items-center justify-between flex-wrap gap-1.5">
+          <MiniLabel>Caulking / Add-Ons for this window</MiniLabel>
+          <select
+            onChange={(e) => { if (e.target.value) { onAddAddOn(e.target.value); e.target.value = ""; } }}
+            defaultValue=""
+            className="text-xs px-2 py-1 rounded border"
+            style={{ borderColor: "#ddd" }}
+          >
+            <option value="" disabled>+ Add charge...</option>
+            {addOnPresets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </div>
+        {windowAddOns.length > 0 && (
+          <div className="space-y-1.5 mt-1.5">
+            {windowAddOns.map((a) => (
+              <div key={a.id} className="grid grid-cols-12 gap-1.5 items-end">
+                <div className="col-span-5">
+                  <input value={a.name} onChange={(e) => onUpdateAddOn(a.id, "name", e.target.value)} className="w-full text-xs px-2 py-1 rounded border" style={{ borderColor: "#ddd" }} />
+                </div>
+                <div className="col-span-2">
+                  <input type="number" step="0.25" value={a.rate} onChange={(e) => onUpdateAddOn(a.id, "rate", parseFloat(e.target.value) || 0)} className="w-full text-xs px-2 py-1 rounded border" style={{ borderColor: "#ddd" }} title="Rate" />
+                </div>
+                <div className="col-span-3">
+                  <input type="number" step="0.5" value={a.qty} onChange={(e) => onUpdateAddOn(a.id, "qty", e.target.value)} className="w-full text-xs px-2 py-1 rounded border" style={{ borderColor: "#ddd" }} title={UNIT_QTY_LABELS[a.unit]} />
+                </div>
+                <div className="col-span-1 text-right text-xs" style={{ fontFamily: "ui-monospace, monospace" }}>{money(addOnLineTotal(a))}</div>
+                <div className="col-span-1 flex justify-end">
+                  <button onClick={() => onRemoveAddOn(a.id)} className="text-red-500 p-1"><Trash2 size={13} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="flex justify-between mt-1.5 text-xs" style={{ color: STEEL }}>
-        <span>{sqft.toFixed(2)} sq ft &times; {money(rate)}/sq ft</span>
+        <span>{sqft.toFixed(2)} sq ft &times; {money(rate)}/sq ft{addOnsTotal > 0 ? ` + ${money(addOnsTotal)} add-ons` : ""}</span>
         <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700, color: INK }}>{money(total)}</span>
       </div>
     </div>
   );
 }
 
-function RoomCard({ room, filmPresets, onRename, onRemoveRoom, onAddWindow, onUpdateWindow, onRemoveWindow, onPhoto, onToggleHidden }) {
+function RoomCard({ room, filmPresets, addOnPresets, onRename, onRemoveRoom, onAddWindow, onUpdateWindow, onRemoveWindow, onDuplicateWindow, onToggleWindowHidden, onAddWindowAddOn, onUpdateWindowAddOn, onRemoveWindowAddOn, onPhoto, onToggleHidden }) {
   const imgRef = useRef(null);
   const [activePinId, setActivePinId] = useState(null);
 
-  const roomSqft = room.windows.reduce((s, w) => s + sqftOf(w), 0);
-  const roomTotal = room.windows.reduce((s, w) => {
+  const visibleWindows = room.windows.filter((w) => !w.hidden);
+  const roomSqft = visibleWindows.reduce((s, w) => s + sqftOf(w), 0);
+  const roomTotal = visibleWindows.reduce((s, w) => {
     const rate = filmPresets.find((f) => f.id === w.film)?.rate || 0;
-    return s + sqftOf(w) * rate;
+    const addOnsTotal = (w.addOns || []).reduce((a, line) => a + addOnLineTotal(line), 0);
+    return s + sqftOf(w) * rate + addOnsTotal;
   }, 0);
 
   const handlePhotoClick = (e) => {
@@ -291,9 +363,15 @@ function RoomCard({ room, filmPresets, onRename, onRemoveRoom, onAddWindow, onUp
             w={w}
             idx={idx}
             filmPresets={filmPresets}
+            addOnPresets={addOnPresets}
             highlighted={w.id === activePinId}
             onUpdate={(field, value) => onUpdateWindow(w.id, field, value)}
             onRemove={() => onRemoveWindow(w.id)}
+            onDuplicate={() => onDuplicateWindow(w.id)}
+            onToggleHidden={() => onToggleWindowHidden(w.id)}
+            onAddAddOn={(presetId) => onAddWindowAddOn(w.id, presetId)}
+            onUpdateAddOn={(addOnId, field, value) => onUpdateWindowAddOn(w.id, addOnId, field, value)}
+            onRemoveAddOn={(addOnId) => onRemoveWindowAddOn(w.id, addOnId)}
           />
         ))}
       </div>
@@ -379,6 +457,8 @@ export default function App() {
   const [showSaved, setShowSaved] = useState(false);
   const [status, setStatus] = useState("");
   const [currentQuoteId, setCurrentQuoteId] = useState(null);
+  const [businessInfo, setBusinessInfo] = useState({ phone: "", email: "", website: "obscuredvisiontints.ca" });
+  const [showBusinessInfo, setShowBusinessInfo] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -420,6 +500,25 @@ export default function App() {
     }, 800);
     return () => clearTimeout(draftTimeout.current);
   }, [customer, filmPresets, floors, tripFee, taxRate, addOnPresets, appliedAddOns, kmTraveled, fuelRatePerKm, currentQuoteId]);
+
+  // Your contact info is a one-time business setting, not tied to any single
+  // quote — loaded once on open, and quietly re-saved whenever you edit it.
+  useEffect(() => {
+    (async () => {
+      try {
+        const b = await window.storage.get("business-info");
+        if (b && b.value) setBusinessInfo((prev) => ({ ...prev, ...JSON.parse(b.value) }));
+      } catch (e) {}
+    })();
+  }, []);
+  const businessInfoTimeout = useRef(null);
+  useEffect(() => {
+    if (businessInfoTimeout.current) clearTimeout(businessInfoTimeout.current);
+    businessInfoTimeout.current = setTimeout(async () => {
+      try { await window.storage.set("business-info", JSON.stringify(businessInfo)); } catch (e) {}
+    }, 800);
+    return () => clearTimeout(businessInfoTimeout.current);
+  }, [businessInfo]);
 
   useEffect(() => {
     (async () => {
@@ -471,7 +570,7 @@ export default function App() {
               ...fl,
               rooms: fl.rooms.map((r) =>
                 r.id === roomId
-                  ? { ...r, windows: [...r.windows, { id, width: "", length: "", qty: 1, film: filmPresets[0].id, filmName: "", ...pin }] }
+                  ? { ...r, windows: [...r.windows, { id, width: "", length: "", qty: 1, film: filmPresets[0].id, filmName: "", hidden: false, addOns: [], ...pin }] }
                   : r
               ),
             }
@@ -492,6 +591,108 @@ export default function App() {
     setFloors((f) =>
       f.map((fl) =>
         fl.id === floorId ? { ...fl, rooms: fl.rooms.map((r) => (r.id === roomId ? { ...r, windows: r.windows.filter((w) => w.id !== winId) } : r)) } : fl
+      )
+    );
+
+  // Clones a window right after itself — the point being to split one physical
+  // window into two entries (e.g. interior film on one, exterior film + silicone
+  // caulking on the other) without re-typing the same dimensions.
+  const duplicateWindow = (floorId, roomId, winId) =>
+    setFloors((f) =>
+      f.map((fl) =>
+        fl.id === floorId
+          ? {
+              ...fl,
+              rooms: fl.rooms.map((r) => {
+                if (r.id !== roomId) return r;
+                const idx = r.windows.findIndex((w) => w.id === winId);
+                if (idx === -1) return r;
+                const original = r.windows[idx];
+                const clone = { ...original, id: uid(), addOns: (original.addOns || []).map((a) => ({ ...a, id: uid() })) };
+                const nextWindows = [...r.windows];
+                nextWindows.splice(idx + 1, 0, clone);
+                return { ...r, windows: nextWindows };
+              }),
+            }
+          : fl
+      )
+    );
+
+  const toggleWindowHidden = (floorId, roomId, winId) =>
+    setFloors((f) =>
+      f.map((fl) =>
+        fl.id === floorId
+          ? { ...fl, rooms: fl.rooms.map((r) => (r.id === roomId ? { ...r, windows: r.windows.map((w) => (w.id === winId ? { ...w, hidden: !w.hidden } : w)) } : r)) }
+          : fl
+      )
+    );
+
+  // Per-window add-ons (caulking, exterior silicone, etc.) so a duplicated window
+  // can carry its own charge while its sibling doesn't. Linear-ft charges default
+  // their quantity to the window's own perimeter, since that's almost always right.
+  const addWindowAddOn = (floorId, roomId, winId, presetId) => {
+    const preset = addOnPresets.find((a) => a.id === presetId);
+    if (!preset) return;
+    setFloors((f) =>
+      f.map((fl) =>
+        fl.id === floorId
+          ? {
+              ...fl,
+              rooms: fl.rooms.map((r) =>
+                r.id !== roomId
+                  ? r
+                  : {
+                      ...r,
+                      windows: r.windows.map((w) => {
+                        if (w.id !== winId) return w;
+                        let defaultQty = preset.unit === "flat" ? 1 : "";
+                        if (preset.unit === "linear_ft") {
+                          const p = perimeterFt(w);
+                          if (p > 0) defaultQty = Math.round(p * 10) / 10;
+                        }
+                        const newAddOn = { id: uid(), presetId: preset.id, name: preset.name, unit: preset.unit, rate: preset.rate, qty: defaultQty };
+                        return { ...w, addOns: [...(w.addOns || []), newAddOn] };
+                      }),
+                    }
+              ),
+            }
+          : fl
+      )
+    );
+  };
+  const updateWindowAddOn = (floorId, roomId, winId, addOnId, field, value) =>
+    setFloors((f) =>
+      f.map((fl) =>
+        fl.id === floorId
+          ? {
+              ...fl,
+              rooms: fl.rooms.map((r) =>
+                r.id !== roomId
+                  ? r
+                  : {
+                      ...r,
+                      windows: r.windows.map((w) =>
+                        w.id !== winId ? w : { ...w, addOns: (w.addOns || []).map((a) => (a.id === addOnId ? { ...a, [field]: value } : a)) }
+                      ),
+                    }
+              ),
+            }
+          : fl
+      )
+    );
+  const removeWindowAddOn = (floorId, roomId, winId, addOnId) =>
+    setFloors((f) =>
+      f.map((fl) =>
+        fl.id === floorId
+          ? {
+              ...fl,
+              rooms: fl.rooms.map((r) =>
+                r.id !== roomId
+                  ? r
+                  : { ...r, windows: r.windows.map((w) => (w.id !== winId ? w : { ...w, addOns: (w.addOns || []).filter((a) => a.id !== addOnId) })) }
+              ),
+            }
+          : fl
       )
     );
 
@@ -524,6 +725,7 @@ export default function App() {
     floors.filter((fl) => !fl.hidden).forEach((fl) => {
       fl.rooms.filter((r) => !r.hidden).forEach((r) => {
         r.windows.forEach((w, wi) => {
+          if (w.hidden) return;
           const width = parseFloat(w.width) || 0;
           const height = parseFloat(w.length) || 0;
           const qty = parseInt(w.qty) || 0;
@@ -579,12 +781,13 @@ export default function App() {
   }, [rollPlan, rollWidths, rollBuffer, crossBuffer, kerf, rollOverrides]);
 
   const computed = useMemo(() => {
-    let grandSqft = 0, grandTotal = 0;
+    let grandSqft = 0, grandTotal = 0, windowAddOnsTotal = 0;
     const byFilm = {};
+    const byWindowAddOn = {};
     const floorSummaries = floors.map((fl) => {
       let floorSqft = 0, floorTotal = 0;
       fl.rooms.filter((r) => !r.hidden).forEach((r) => {
-        r.windows.forEach((w) => {
+        r.windows.filter((w) => !w.hidden).forEach((w) => {
           const sqft = sqftOf(w);
           const rate = filmPresets.find((f) => f.id === w.film)?.rate || 0;
           const total = sqft * rate;
@@ -594,6 +797,11 @@ export default function App() {
             byFilm[w.film] = byFilm[w.film] || { sqft: 0, total: 0 };
             byFilm[w.film].sqft += sqft;
             byFilm[w.film].total += total;
+            (w.addOns || []).forEach((a) => {
+              const t = addOnLineTotal(a);
+              windowAddOnsTotal += t;
+              byWindowAddOn[a.name] = (byWindowAddOn[a.name] || 0) + t;
+            });
           }
         });
       });
@@ -603,13 +811,13 @@ export default function App() {
       }
       return { id: fl.id, name: fl.name, sqft: floorSqft, total: floorTotal, hidden: fl.hidden };
     });
-    return { floorSummaries, byFilm, grandSqft, grandTotal };
+    return { floorSummaries, byFilm, grandSqft, grandTotal, windowAddOnsTotal, byWindowAddOn };
   }, [floors, filmPresets]);
 
   const addOnsTotal = appliedAddOns.reduce((s, a) => s + addOnLineTotal(a), 0);
   const fuelCost = (parseFloat(kmTraveled) || 0) * (parseFloat(fuelRatePerKm) || 0);
   const travelTotal = (parseFloat(tripFee) || 0) + fuelCost;
-  const subtotal = computed.grandTotal + addOnsTotal + travelTotal;
+  const subtotal = computed.grandTotal + addOnsTotal + computed.windowAddOnsTotal + travelTotal;
   const tax = subtotal * ((parseFloat(taxRate) || 0) / 100);
   const finalTotal = subtotal + tax;
 
@@ -699,9 +907,11 @@ export default function App() {
       total: v.total,
     })),
     addonLines: appliedAddOns.map((a) => ({ name: a.name, total: addOnLineTotal(a) })),
+    windowAddonLines: Object.entries(computed.byWindowAddOn).map(([name, total]) => ({ name, total })),
     grandSqft: computed.grandSqft,
     materialsTotal: computed.grandTotal,
     addonsTotal: addOnsTotal,
+    windowAddonsTotal: computed.windowAddOnsTotal,
     travelTotal,
     subtotal,
     taxRate: parseFloat(taxRate) || 0,
@@ -717,7 +927,7 @@ export default function App() {
 
     // Header band
     doc.setFillColor(11, 15, 15);
-    doc.rect(0, 0, pageWidth, 32, "F");
+    doc.rect(0, 0, pageWidth, 36, "F");
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(16);
     doc.setFont(undefined, "bold");
@@ -726,10 +936,17 @@ export default function App() {
     doc.setFont(undefined, "normal");
     doc.setTextColor(0, 201, 200);
     doc.text("FLAT GLASS QUOTE", 14, 22);
+    const contactLine = [businessInfo.phone, businessInfo.email, businessInfo.website].filter(Boolean).join("   |   ");
+    if (contactLine) {
+      doc.setFontSize(8);
+      doc.setTextColor(190, 190, 190);
+      doc.text(contactLine, 14, 29);
+    }
     doc.setTextColor(180, 180, 180);
+    doc.setFontSize(9);
     doc.text(s.date, pageWidth - 14, 15, { align: "right" });
 
-    y = 42;
+    y = 46;
     doc.setTextColor(20, 20, 20);
     doc.setFontSize(11);
     doc.setFont(undefined, "bold");
@@ -786,6 +1003,21 @@ export default function App() {
       });
     }
 
+    if (s.windowAddonLines.length > 0) {
+      y += 4;
+      doc.setFont(undefined, "bold");
+      doc.setFontSize(11);
+      doc.text("Window Add-Ons (Caulking, etc.)", 14, y);
+      doc.setFont(undefined, "normal");
+      doc.setFontSize(10);
+      y += 7;
+      s.windowAddonLines.forEach((a) => {
+        doc.text(a.name, 14, y);
+        doc.text(money(a.total), pageWidth - 14, y, { align: "right" });
+        y += 6;
+      });
+    }
+
     y += 6;
     doc.setDrawColor(220, 220, 220);
     doc.line(14, y, pageWidth - 14, y);
@@ -799,6 +1031,7 @@ export default function App() {
     };
     totalsRow("Materials + labor", money(s.materialsTotal));
     totalsRow("Add-ons", money(s.addonsTotal));
+    totalsRow("Window Add-Ons", money(s.windowAddonsTotal));
     totalsRow("Travel", money(s.travelTotal));
     totalsRow("Subtotal", money(s.subtotal));
     totalsRow(`Tax (${s.taxRate}%)`, money(s.tax));
@@ -817,6 +1050,8 @@ export default function App() {
     const s = buildQuoteSummary();
     const lines = [];
     lines.push(`Obscured Vision Tints — Flat Glass Quote`);
+    const contactLine = [businessInfo.phone, businessInfo.email, businessInfo.website].filter(Boolean).join("  |  ");
+    if (contactLine) lines.push(contactLine);
     lines.push(`Date: ${s.date}`);
     if (s.customer.name) lines.push(`Customer: ${s.customer.name}`);
     if (s.customer.projectName) lines.push(`Project: ${s.customer.projectName}`);
@@ -834,9 +1069,15 @@ export default function App() {
       lines.push("Add-Ons:");
       s.addonLines.forEach((a) => lines.push(`  ${a.name} — ${money(a.total)}`));
     }
+    if (s.windowAddonLines.length > 0) {
+      lines.push("");
+      lines.push("Window Add-Ons (Caulking, etc.):");
+      s.windowAddonLines.forEach((a) => lines.push(`  ${a.name} — ${money(a.total)}`));
+    }
     lines.push("");
     lines.push(`Materials + labor: ${money(s.materialsTotal)}`);
     lines.push(`Add-ons: ${money(s.addonsTotal)}`);
+    lines.push(`Window Add-Ons: ${money(s.windowAddonsTotal)}`);
     lines.push(`Travel: ${money(s.travelTotal)}`);
     lines.push(`Subtotal: ${money(s.subtotal)}`);
     lines.push(`Tax (${s.taxRate}%): ${money(s.tax)}`);
@@ -870,6 +1111,9 @@ export default function App() {
     s.addonLines.forEach((a) => {
       rows.push([invoiceNo, customerName, s.date, "Add-On Service", a.name, "1", a.total.toFixed(2), a.total.toFixed(2)]);
     });
+    s.windowAddonLines.forEach((a) => {
+      rows.push([invoiceNo, customerName, s.date, "Caulking / Sealant", a.name, "1", a.total.toFixed(2), a.total.toFixed(2)]);
+    });
     if (s.travelTotal > 0) {
       rows.push([invoiceNo, customerName, s.date, "Travel", "Trip / mileage charge", "1", s.travelTotal.toFixed(2), s.travelTotal.toFixed(2)]);
     }
@@ -899,9 +1143,15 @@ export default function App() {
             <div>
               <div style={{ fontStyle: "italic", fontWeight: 800, fontSize: 20 }}>Obscured Vision <span style={{ color: TEAL }}>Tints</span></div>
               <div style={{ fontSize: 11, color: "#9ca3af", letterSpacing: 1.5, textTransform: "uppercase" }}>Floor / Room Flat Glass Quote</div>
+              {(businessInfo.phone || businessInfo.email || businessInfo.website) && (
+                <div style={{ fontSize: 11, color: "#d1d5db", marginTop: 3 }}>
+                  {[businessInfo.phone, businessInfo.email, businessInfo.website].filter(Boolean).join("  ·  ")}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex gap-2 print:hidden">
+            <button onClick={() => setShowBusinessInfo(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }} title="Your contact info"><Settings size={15} /></button>
             <button onClick={() => setShowSaved(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "#242424", color: "#fff" }}><FolderOpen size={15} /> Saved ({saved.length})</button>
             <button onClick={newQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Plus size={15} /> New</button>
             <button onClick={saveQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: TEAL, color: INK }}><Save size={15} /> {currentQuoteId ? "Update" : "Save"}</button>
@@ -967,11 +1217,17 @@ export default function App() {
                       key={r.id}
                       room={r}
                       filmPresets={filmPresets}
+                      addOnPresets={addOnPresets}
                       onRename={(name) => renameRoom(fl.id, r.id, name)}
                       onRemoveRoom={() => removeRoom(fl.id, r.id)}
                       onAddWindow={(pin) => addWindow(fl.id, r.id, pin)}
                       onUpdateWindow={(winId, field, value) => updateWindow(fl.id, r.id, winId, field, value)}
                       onRemoveWindow={(winId) => removeWindow(fl.id, r.id, winId)}
+                      onDuplicateWindow={(winId) => duplicateWindow(fl.id, r.id, winId)}
+                      onToggleWindowHidden={(winId) => toggleWindowHidden(fl.id, r.id, winId)}
+                      onAddWindowAddOn={(winId, presetId) => addWindowAddOn(fl.id, r.id, winId, presetId)}
+                      onUpdateWindowAddOn={(winId, addOnId, field, value) => updateWindowAddOn(fl.id, r.id, winId, addOnId, field, value)}
+                      onRemoveWindowAddOn={(winId, addOnId) => removeWindowAddOn(fl.id, r.id, winId, addOnId)}
                       onPhoto={(photo) => setRoomPhoto(fl.id, r.id, photo)}
                       onToggleHidden={() => toggleRoomHidden(fl.id, r.id)}
                     />
@@ -1262,6 +1518,20 @@ export default function App() {
               </div>
             )}
 
+            {Object.keys(computed.byWindowAddOn).length > 0 && (
+              <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }} className="p-5">
+                <SectionTitle>Window Add-Ons (Caulking, etc.)</SectionTitle>
+                <div className="mt-3 space-y-2 text-sm">
+                  {Object.entries(computed.byWindowAddOn).map(([name, total]) => (
+                    <div key={name} className="flex justify-between">
+                      <span style={{ color: STEEL }}>{name}</span>
+                      <span style={{ fontFamily: "ui-monospace, monospace" }}>{money(total)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }} className="p-5">
               <SectionTitle>Travel</SectionTitle>
               <div className="grid grid-cols-3 gap-3 mt-3">
@@ -1290,6 +1560,7 @@ export default function App() {
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Total sq ft</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{computed.grandSqft.toFixed(2)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Materials + labor</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(computed.grandTotal)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Add-ons</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(addOnsTotal)}</span></div>
+                <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Window Add-Ons</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(computed.windowAddOnsTotal)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Travel</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(travelTotal)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Subtotal</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(subtotal)}</span></div>
                 <div className="flex items-center justify-between">
@@ -1368,6 +1639,40 @@ export default function App() {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBusinessInfo && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center print:hidden"
+          style={{ background: "rgba(0,0,0,0.4)" }}
+          onClick={() => setShowBusinessInfo(false)}
+        >
+          <div
+            style={{ background: "#fff", width: 340, maxWidth: "90vw", boxSizing: "border-box", borderRadius: 8 }}
+            className="p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <SectionTitle>Your Contact Info</SectionTitle>
+              <button onClick={() => setShowBusinessInfo(false)}><X size={18} /></button>
+            </div>
+            <div className="text-xs mb-3" style={{ color: STEEL }}>Shown at the top of every quote, in print, PDF, and email.</div>
+            <div className="space-y-3">
+              <div>
+                <MiniLabel>Phone</MiniLabel>
+                <input value={businessInfo.phone} onChange={(e) => setBusinessInfo({ ...businessInfo, phone: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} />
+              </div>
+              <div>
+                <MiniLabel>Email</MiniLabel>
+                <input value={businessInfo.email} onChange={(e) => setBusinessInfo({ ...businessInfo, email: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} />
+              </div>
+              <div>
+                <MiniLabel>Website</MiniLabel>
+                <input value={businessInfo.website} onChange={(e) => setBusinessInfo({ ...businessInfo, website: e.target.value })} className="w-full text-sm px-2.5 py-2 rounded border" style={{ borderColor: "#ddd" }} />
+              </div>
             </div>
           </div>
         </div>
