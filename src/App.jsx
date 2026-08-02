@@ -65,6 +65,21 @@ const perimeterFt = (w) => {
   return (2 * (width + length)) / 12;
 };
 
+// Once a device has its own saved price list, a plain "use what's saved" load
+// would permanently hide any new built-in preset added in a future update
+// (the saved list simply doesn't know it exists yet). This rebuilds the list
+// in the app's defined order, keeps any rate/label edits already made to a
+// built-in item, and appends anything genuinely custom onto the end — so new
+// built-ins always show up, in the right spot, without losing your edits.
+function mergePresets(persisted, defaults) {
+  if (!persisted || persisted.length === 0) return defaults;
+  const persistedById = new Map(persisted.map((p) => [p.id, p]));
+  const merged = defaults.map((d) => (persistedById.has(d.id) ? { ...d, ...persistedById.get(d.id) } : d));
+  const defaultIds = new Set(defaults.map((d) => d.id));
+  const customExtras = persisted.filter((p) => !defaultIds.has(p.id));
+  return [...merged, ...customExtras];
+}
+
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 const DEFAULT_ROLL_WIDTHS = [36, 48, 60, 72];
@@ -460,11 +475,19 @@ export default function App() {
     (async () => {
       try {
         const fp = await window.storage.get("pricelist:film");
-        if (fp && fp.value) setFilmPresets(JSON.parse(fp.value));
+        if (fp && fp.value) {
+          const merged = mergePresets(JSON.parse(fp.value), DEFAULT_FILM_PRESETS);
+          setFilmPresets(merged);
+          window.storage.set("pricelist:film", JSON.stringify(merged)).catch(() => {});
+        }
       } catch (e) {}
       try {
         const ap = await window.storage.get("pricelist:addons");
-        if (ap && ap.value) setAddOnPresets(JSON.parse(ap.value));
+        if (ap && ap.value) {
+          const merged = mergePresets(JSON.parse(ap.value), DEFAULT_ADDON_PRESETS);
+          setAddOnPresets(merged);
+          window.storage.set("pricelist:addons", JSON.stringify(merged)).catch(() => {});
+        }
       } catch (e) {}
     })();
   }, []);
@@ -828,11 +851,11 @@ export default function App() {
     // rates were only a historical snapshot, not your current price list.
     try {
       const fp = await window.storage.get("pricelist:film");
-      setFilmPresets(fp && fp.value ? JSON.parse(fp.value) : DEFAULT_FILM_PRESETS);
+      setFilmPresets(fp && fp.value ? mergePresets(JSON.parse(fp.value), DEFAULT_FILM_PRESETS) : DEFAULT_FILM_PRESETS);
     } catch (e) { setFilmPresets(DEFAULT_FILM_PRESETS); }
     try {
       const ap = await window.storage.get("pricelist:addons");
-      setAddOnPresets(ap && ap.value ? JSON.parse(ap.value) : DEFAULT_ADDON_PRESETS);
+      setAddOnPresets(ap && ap.value ? mergePresets(JSON.parse(ap.value), DEFAULT_ADDON_PRESETS) : DEFAULT_ADDON_PRESETS);
     } catch (e) { setAddOnPresets(DEFAULT_ADDON_PRESETS); }
     window.storage.delete("draft:current").catch(() => {});
     setStatus("Started a new quote.");
@@ -937,7 +960,7 @@ export default function App() {
       y += 4;
       doc.setFont(undefined, "bold");
       doc.setFontSize(11);
-      doc.text("Add-Ons", 14, y);
+      doc.text("Add-Ons (Whole Job)", 14, y);
       doc.setFont(undefined, "normal");
       doc.setFontSize(10);
       y += 7;
@@ -952,7 +975,7 @@ export default function App() {
       y += 4;
       doc.setFont(undefined, "bold");
       doc.setFontSize(11);
-      doc.text("Window Add-Ons (Caulking, etc.)", 14, y);
+      doc.text("Add-Ons (Per Window)", 14, y);
       doc.setFont(undefined, "normal");
       doc.setFontSize(10);
       y += 7;
@@ -975,8 +998,8 @@ export default function App() {
       y += 6;
     };
     totalsRow("Materials + labor", money(s.materialsTotal));
-    totalsRow("Add-ons", money(s.addonsTotal));
-    totalsRow("Window Add-Ons", money(s.windowAddonsTotal));
+    totalsRow("Add-Ons (Whole Job)", money(s.addonsTotal));
+    totalsRow("Add-Ons (Per Window)", money(s.windowAddonsTotal));
     totalsRow("Travel", money(s.travelTotal));
     totalsRow("Subtotal", money(s.subtotal));
     totalsRow(`Tax (${s.taxRate}%)`, money(s.tax));
@@ -1012,18 +1035,18 @@ export default function App() {
     s.filmLines.forEach((f) => lines.push(`  ${f.label} — ${f.sqft.toFixed(1)} sq ft — ${money(f.total)}`));
     if (s.addonLines.length > 0) {
       lines.push("");
-      lines.push("Add-Ons:");
+      lines.push("Add-Ons (Whole Job):");
       s.addonLines.forEach((a) => lines.push(`  ${a.name} — ${money(a.total)}`));
     }
     if (s.windowAddonLines.length > 0) {
       lines.push("");
-      lines.push("Window Add-Ons (Caulking, etc.):");
+      lines.push("Add-Ons (Per Window):");
       s.windowAddonLines.forEach((a) => lines.push(`  ${a.name} — ${money(a.total)}`));
     }
     lines.push("");
     lines.push(`Materials + labor: ${money(s.materialsTotal)}`);
-    lines.push(`Add-ons: ${money(s.addonsTotal)}`);
-    lines.push(`Window Add-Ons: ${money(s.windowAddonsTotal)}`);
+    lines.push(`Add-Ons (Whole Job): ${money(s.addonsTotal)}`);
+    lines.push(`Add-Ons (Per Window): ${money(s.windowAddonsTotal)}`);
     lines.push(`Travel: ${money(s.travelTotal)}`);
     lines.push(`Subtotal: ${money(s.subtotal)}`);
     lines.push(`Tax (${s.taxRate}%): ${money(s.tax)}`);
@@ -1239,7 +1262,7 @@ export default function App() {
 
             <div className="mt-5">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="text-xs font-bold uppercase" style={{ color: TEAL_DEEP, letterSpacing: 1 }}>Applied to This Quote</div>
+                <div className="text-xs font-bold uppercase" style={{ color: TEAL_DEEP, letterSpacing: 1 }}>Applied to Whole Job</div>
                 <select
                   onChange={(e) => { if (e.target.value) { addAppliedAddOn(e.target.value); e.target.value = ""; } }}
                   defaultValue=""
@@ -1415,7 +1438,7 @@ export default function App() {
 
             {appliedAddOns.length > 0 && (
               <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }} className="p-5">
-                <SectionTitle>Add-Ons</SectionTitle>
+                <SectionTitle>Add-Ons (Whole Job)</SectionTitle>
                 <div className="mt-3 space-y-2 text-sm">
                   {appliedAddOns.map((a) => (
                     <div key={a.id} className="flex justify-between">
@@ -1429,7 +1452,7 @@ export default function App() {
 
             {Object.keys(computed.byWindowAddOn).length > 0 && (
               <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }} className="p-5">
-                <SectionTitle>Window Add-Ons (Caulking, etc.)</SectionTitle>
+                <SectionTitle>Add-Ons (Per Window)</SectionTitle>
                 <div className="mt-3 space-y-2 text-sm">
                   {Object.entries(computed.byWindowAddOn).map(([name, total]) => (
                     <div key={name} className="flex justify-between">
@@ -1468,8 +1491,8 @@ export default function App() {
               <div className="mt-4 space-y-2 text-sm">
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Total sq ft</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{computed.grandSqft.toFixed(2)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Materials + labor</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(computed.grandTotal)}</span></div>
-                <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Add-ons</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(addOnsTotal)}</span></div>
-                <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Window Add-Ons</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(computed.windowAddOnsTotal)}</span></div>
+                <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Add-Ons (Whole Job)</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(addOnsTotal)}</span></div>
+                <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Add-Ons (Per Window)</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(computed.windowAddOnsTotal)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Travel</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(travelTotal)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Subtotal</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(subtotal)}</span></div>
                 <div className="flex items-center justify-between">
