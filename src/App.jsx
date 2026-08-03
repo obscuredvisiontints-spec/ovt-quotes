@@ -868,6 +868,28 @@ export default function App() {
     date: new Date().toLocaleDateString("en-CA"),
     customer,
     floorLines: computed.floorSummaries.filter((fs) => !fs.hidden),
+    roomLines: floors
+      .filter((fl) => !fl.hidden)
+      .flatMap((fl) =>
+        fl.rooms
+          .filter((r) => !r.hidden)
+          .map((r) => {
+            const visibleWindows = r.windows.filter((w) => !w.hidden);
+            let sqft = 0, total = 0;
+            const filmSet = new Set();
+            visibleWindows.forEach((w) => {
+              const ws = sqftOf(w);
+              const preset = filmPresets.find((f) => f.id === w.film);
+              const rate = preset?.rate || 0;
+              sqft += ws;
+              total += ws * rate;
+              const label = (w.filmName || "").trim() || preset?.label || "";
+              if (label && ws > 0) filmSet.add(label);
+            });
+            return { floorName: fl.name, roomName: r.name, sqft, total, films: Array.from(filmSet) };
+          })
+      )
+      .filter((rl) => rl.sqft > 0),
     filmLines: Object.entries(computed.byFilm).map(([id, v]) => ({
       label: filmPresets.find((f) => f.id === id)?.label || id,
       sqft: v.sqft,
@@ -931,29 +953,25 @@ export default function App() {
     y += 6;
     doc.setFont(undefined, "bold");
     doc.setFontSize(11);
-    doc.text("Breakdown by Area", 14, y);
+    doc.text("Breakdown by Floor & Room", 14, y);
     doc.setFont(undefined, "normal");
     doc.setFontSize(10);
     y += 7;
-    s.floorLines.forEach((fl) => {
-      doc.text(fl.name, 14, y);
-      doc.text(`${fl.sqft.toFixed(1)} sq ft`, 120, y);
-      doc.text(money(fl.total), pageWidth - 14, y, { align: "right" });
-      y += 6;
-    });
-
-    y += 4;
-    doc.setFont(undefined, "bold");
-    doc.setFontSize(11);
-    doc.text("By Film / Protection Type", 14, y);
-    doc.setFont(undefined, "normal");
-    doc.setFontSize(10);
-    y += 7;
-    s.filmLines.forEach((f) => {
-      doc.text(f.label, 14, y);
-      doc.text(`${f.sqft.toFixed(1)} sq ft`, 120, y);
-      doc.text(money(f.total), pageWidth - 14, y, { align: "right" });
-      y += 6;
+    s.roomLines.forEach((rl) => {
+      doc.setTextColor(20, 20, 20);
+      doc.setFontSize(10);
+      doc.text(`${rl.floorName} — ${rl.roomName}`, 14, y);
+      doc.text(`${rl.sqft.toFixed(1)} sq ft`, 120, y);
+      doc.text(money(rl.total), pageWidth - 14, y, { align: "right" });
+      y += 5;
+      if (rl.films.length > 0) {
+        doc.setFontSize(8.5);
+        doc.setTextColor(120, 120, 120);
+        doc.text(`Film: ${rl.films.join(", ")}`, 14, y);
+        y += 6;
+      } else {
+        y += 3;
+      }
     });
 
     if (s.addonLines.length > 0) {
@@ -998,8 +1016,8 @@ export default function App() {
       y += 6;
     };
     totalsRow("Materials + labor", money(s.materialsTotal));
-    totalsRow("Add-Ons (Whole Job)", money(s.addonsTotal));
-    totalsRow("Add-Ons (Per Window)", money(s.windowAddonsTotal));
+    if (s.addonsTotal > 0) totalsRow("Add-Ons (Whole Job)", money(s.addonsTotal));
+    if (s.windowAddonsTotal > 0) totalsRow("Add-Ons (Per Window)", money(s.windowAddonsTotal));
     totalsRow("Travel", money(s.travelTotal));
     totalsRow("Subtotal", money(s.subtotal));
     totalsRow(`Tax (${s.taxRate}%)`, money(s.tax));
@@ -1028,11 +1046,11 @@ export default function App() {
     if (s.customer.phone) lines.push(`Phone: ${s.customer.phone}`);
     if (s.customer.email) lines.push(`Email: ${s.customer.email}`);
     lines.push("");
-    lines.push("Breakdown by Area:");
-    s.floorLines.forEach((fl) => lines.push(`  ${fl.name} — ${fl.sqft.toFixed(1)} sq ft — ${money(fl.total)}`));
-    lines.push("");
-    lines.push("By Film / Protection Type:");
-    s.filmLines.forEach((f) => lines.push(`  ${f.label} — ${f.sqft.toFixed(1)} sq ft — ${money(f.total)}`));
+    lines.push("Breakdown by Floor & Room:");
+    s.roomLines.forEach((rl) => {
+      lines.push(`  ${rl.floorName} — ${rl.roomName} — ${rl.sqft.toFixed(1)} sq ft — ${money(rl.total)}`);
+      if (rl.films.length > 0) lines.push(`    Film: ${rl.films.join(", ")}`);
+    });
     if (s.addonLines.length > 0) {
       lines.push("");
       lines.push("Add-Ons (Whole Job):");
@@ -1045,8 +1063,8 @@ export default function App() {
     }
     lines.push("");
     lines.push(`Materials + labor: ${money(s.materialsTotal)}`);
-    lines.push(`Add-Ons (Whole Job): ${money(s.addonsTotal)}`);
-    lines.push(`Add-Ons (Per Window): ${money(s.windowAddonsTotal)}`);
+    if (s.addonsTotal > 0) lines.push(`Add-Ons (Whole Job): ${money(s.addonsTotal)}`);
+    if (s.windowAddonsTotal > 0) lines.push(`Add-Ons (Per Window): ${money(s.windowAddonsTotal)}`);
     lines.push(`Travel: ${money(s.travelTotal)}`);
     lines.push(`Subtotal: ${money(s.subtotal)}`);
     lines.push(`Tax (${s.taxRate}%): ${money(s.tax)}`);
