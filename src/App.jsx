@@ -80,30 +80,62 @@ function mergePresets(persisted, defaults) {
   return [...merged, ...customExtras];
 }
 
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 const DEFAULT_ROLL_WIDTHS = [36, 48, 60, 72];
 
 // First-Fit Decreasing Height shelf packing: pieces already have {cross, length} in inches
 // (cross = dimension that must sit under the roll width, length = dimension pulled along the roll).
-function packShelves(pieces, rollWidth, kerf) {
-  const sorted = [...pieces].sort((a, b) => b.length - a.length);
+// Professional cut-optimization software (OptiCutter included) allows a piece
+// to rotate to whichever orientation wastes the least material, and always
+// tries to reuse space on an existing cut before ever starting a new one — a
+// new cut is the expensive move, since it always costs extra roll length.
+// The old version locked every piece into one fixed orientation before
+// packing even started, which is exactly what caused pieces that could fit
+// sideways on the current cut to force a wasteful new one instead.
+function packShelves(rawPieces, rollWidth, kerf, crossBuffer, rollBuffer) {
+  const withOrientations = rawPieces.map((p) => {
+    const optA = { cross: p.width + crossBuffer, length: p.height + rollBuffer };
+    const optB = { cross: p.height + crossBuffer, length: p.width + rollBuffer };
+    let orientations = p.width !== p.height ? [optA, optB] : [optA];
+    orientations = orientations.filter((o) => o.cross <= rollWidth);
+    if (orientations.length === 0) {
+      // Oversized even in its best orientation — keep whichever is
+      // least-bad so it still shows up in the layout instead of vanishing.
+      orientations = [optA.cross <= optB.cross ? optA : optB];
+    }
+    return { ...p, orientations };
+  });
+
+  // Largest pieces first (classic decreasing-size heuristic) — this ordering
+  // stays sound regardless of which orientation a piece ultimately uses.
+  const sorted = [...withOrientations].sort((a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height));
+
   const shelves = [];
   sorted.forEach((p) => {
-    let placed = false;
-    for (const shelf of shelves) {
-      const addWidth = (shelf.pieces.length > 0 ? kerf : 0) + p.cross;
-      if (shelf.remaining >= addWidth) {
-        shelf.pieces.push(p);
-        shelf.remaining -= addWidth;
-        placed = true;
-        break;
-      }
-    }
-    if (!placed) {
-      shelves.push({ height: p.length, remaining: rollWidth - p.cross, pieces: [p] });
+    let best = null;
+    shelves.forEach((shelf) => {
+      p.orientations.forEach((orientation) => {
+        const addWidth = (shelf.pieces.length > 0 ? kerf : 0) + orientation.cross;
+        // A piece can join an existing cut in either orientation as long as
+        // it fits the remaining width AND doesn't need more length than
+        // that cut already provides.
+        if (shelf.remaining >= addWidth && orientation.length <= shelf.height) {
+          const leftover = shelf.remaining - addWidth;
+          if (!best || leftover < best.leftover) best = { shelf, orientation, leftover, addWidth };
+        }
+      });
+    });
+    if (best) {
+      best.shelf.pieces.push({ ...p, cross: best.orientation.cross, length: best.orientation.length });
+      best.shelf.remaining -= best.addWidth;
+    } else {
+      // No existing cut works — starting a new one. Pick whichever
+      // orientation keeps that new cut as short as possible.
+      const orientation = p.orientations.reduce((min, o) => (o.length < min.length ? o : min), p.orientations[0]);
+      shelves.push({ height: orientation.length, remaining: rollWidth - orientation.cross, pieces: [{ ...p, cross: orientation.cross, length: orientation.length }] });
     }
   });
+
   const totalLength = shelves.reduce((s, sh, idx) => s + sh.height + (idx > 0 ? kerf : 0), 0);
   return { shelves, totalLength };
 }
@@ -150,7 +182,7 @@ function WindowRow({ w, idx, filmPresets, addOnPresets, onUpdate, onRemove, onDu
   if (w.hidden) {
     return (
       <div style={{ border: "1px dashed #ddd", borderRadius: 6, background: "#fafafa" }} className="px-2.5 py-2 flex items-center justify-between">
-        <span className="text-xs font-semibold" style={{ color: STEEL }}>Window {idx + 1} <span className="font-normal">(hidden — excluded from totals)</span></span>
+        <span className="text-xs font-semibold" style={{ color: STEEL }}>{w.name || `Window ${idx + 1}`} <span className="font-normal">(hidden — excluded from totals)</span></span>
         <div className="flex items-center gap-1">
           <button onClick={onToggleHidden} className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded" style={{ background: "#fff", color: TEAL_DEEP, border: `1px solid ${TEAL}` }}>
             <Eye size={12} /> Show
@@ -163,12 +195,19 @@ function WindowRow({ w, idx, filmPresets, addOnPresets, onUpdate, onRemove, onDu
 
   return (
     <div style={{ border: `1px solid ${highlighted ? TEAL : "#eee"}`, borderRadius: 6, background: highlighted ? "#f0fffe" : "#fff" }} className="p-2.5">
-      <div className="grid grid-cols-12 gap-2 items-end">
-        <div className="col-span-1 flex items-center justify-center">
-          <div style={{ background: INK, color: "#fff", borderRadius: "50%", width: 20, height: 20, fontSize: 10, fontWeight: 800 }} className="flex items-center justify-center">
-            {idx + 1}
-          </div>
+      <div className="flex items-center gap-2">
+        <div style={{ background: INK, color: "#fff", borderRadius: "50%", width: 20, height: 20, fontSize: 10, fontWeight: 800, flexShrink: 0 }} className="flex items-center justify-center">
+          {idx + 1}
         </div>
+        <input
+          value={w.name || ""}
+          onChange={(e) => onUpdate("name", e.target.value)}
+          placeholder={`Window ${idx + 1} (e.g. "Sink", "Back Door")`}
+          className="flex-1 text-sm px-2 py-1.5 rounded border font-semibold"
+          style={{ borderColor: "#ddd" }}
+        />
+      </div>
+      <div className="grid grid-cols-12 gap-2 items-end mt-2">
         <div className="col-span-4">
           <MiniLabel>Width (in)</MiniLabel>
           <input type="number" value={w.width} onChange={(e) => onUpdate("width", e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
@@ -209,6 +248,17 @@ function WindowRow({ w, idx, filmPresets, addOnPresets, onUpdate, onRemove, onDu
           onChange={(e) => onUpdate("filmName", e.target.value)}
           placeholder="e.g. Keramos 45"
           className="w-full text-sm px-2 py-1.5 rounded border"
+          style={{ borderColor: "#ddd" }}
+        />
+      </div>
+      <div className="mt-2">
+        <MiniLabel>Notes</MiniLabel>
+        <textarea
+          value={w.notes || ""}
+          onChange={(e) => onUpdate("notes", e.target.value)}
+          placeholder="e.g. hard to reach, needs ladder..."
+          rows={2}
+          className="w-full text-sm px-2 py-1.5 rounded border resize-none"
           style={{ borderColor: "#ddd" }}
         />
       </div>
@@ -400,6 +450,10 @@ export default function App() {
   const [appliedAddOns, setAppliedAddOns] = useState([]);
   const [kmTraveled, setKmTraveled] = useState(0);
   const [fuelRatePerKm, setFuelRatePerKm] = useState(0.5);
+  const [discountType, setDiscountType] = useState("percent");
+  const [discountValue, setDiscountValue] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [noTax, setNoTax] = useState(false);
   const [saved, setSaved] = useState([]);
   const [showSaved, setShowSaved] = useState(false);
   const [status, setStatus] = useState("");
@@ -407,6 +461,35 @@ export default function App() {
   const [businessInfo, setBusinessInfo] = useState({ phone: "", email: "", website: "obscuredvisiontints.ca" });
   const [showBusinessInfo, setShowBusinessInfo] = useState(false);
   const [showFilmPriceList, setShowFilmPriceList] = useState(false);
+  const [qbConnected, setQbConnected] = useState(null);
+  const [qbBusy, setQbBusy] = useState(false);
+
+  // Picks up the redirect back from Intuit's login (?qb=connected / ?qb=error)
+  // and checks whether QuickBooks is currently connected on this deployment.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const qb = params.get("qb");
+      if (qb === "connected") {
+        setStatus("QuickBooks connected.");
+        setTimeout(() => setStatus(""), 3000);
+        window.history.replaceState({}, "", window.location.pathname);
+      } else if (qb === "error") {
+        setStatus("QuickBooks connection failed — try again.");
+        setTimeout(() => setStatus(""), 4000);
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch (e) {}
+    (async () => {
+      try {
+        const res = await fetch("/api/qb/status");
+        const data = await res.json();
+        setQbConnected(!!data.connected);
+      } catch (e) {
+        setQbConnected(false);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -425,6 +508,10 @@ export default function App() {
             if (draft.appliedAddOns) setAppliedAddOns(draft.appliedAddOns);
             if (draft.kmTraveled != null) setKmTraveled(draft.kmTraveled);
             if (draft.fuelRatePerKm != null) setFuelRatePerKm(draft.fuelRatePerKm);
+            if (draft.discountType) setDiscountType(draft.discountType);
+            if (draft.discountValue != null) setDiscountValue(draft.discountValue);
+            if (draft.paymentMethod != null) setPaymentMethod(draft.paymentMethod);
+            if (draft.noTax != null) setNoTax(draft.noTax);
             setCurrentQuoteId(draft.currentQuoteId || null);
             setStatus("Picked up right where you left off.");
             setTimeout(() => setStatus(""), 3000);
@@ -442,12 +529,12 @@ export default function App() {
     if (draftTimeout.current) clearTimeout(draftTimeout.current);
     draftTimeout.current = setTimeout(async () => {
       try {
-        const draft = { customer, filmPresets, floors, tripFee, taxRate, addOnPresets, appliedAddOns, kmTraveled, fuelRatePerKm, currentQuoteId, savedAt: Date.now() };
+        const draft = { customer, filmPresets, floors, tripFee, taxRate, addOnPresets, appliedAddOns, kmTraveled, fuelRatePerKm, discountType, discountValue, paymentMethod, noTax, currentQuoteId, savedAt: Date.now() };
         await window.storage.set("draft:current", JSON.stringify(draft));
       } catch (e) {}
     }, 800);
     return () => clearTimeout(draftTimeout.current);
-  }, [customer, filmPresets, floors, tripFee, taxRate, addOnPresets, appliedAddOns, kmTraveled, fuelRatePerKm, currentQuoteId]);
+  }, [customer, filmPresets, floors, tripFee, taxRate, addOnPresets, appliedAddOns, kmTraveled, fuelRatePerKm, discountType, discountValue, paymentMethod, noTax, currentQuoteId]);
 
   // Your contact info is a one-time business setting, not tied to any single
   // quote — loaded once on open, and quietly re-saved whenever you edit it.
@@ -502,16 +589,7 @@ export default function App() {
               try { const r = await window.storage.get(k); return r ? JSON.parse(r.value) : null; } catch { return null; }
             })
           );
-          const cutoff = Date.now() - THIRTY_DAYS_MS;
-          const fresh = [];
-          for (const q of items.filter(Boolean)) {
-            if (q.savedAt < cutoff) {
-              try { await window.storage.delete(`roomquote:${q.id}`); } catch (e) {}
-            } else {
-              fresh.push(q);
-            }
-          }
-          setSaved(fresh.sort((a, b) => b.savedAt - a.savedAt));
+          setSaved(items.filter(Boolean).sort((a, b) => b.savedAt - a.savedAt));
         }
       } catch (e) {}
     })();
@@ -540,7 +618,7 @@ export default function App() {
               ...fl,
               rooms: fl.rooms.map((r) =>
                 r.id === roomId
-                  ? { ...r, windows: [...r.windows, { id, width: "", length: "", qty: 1, film: filmPresets[0].id, filmName: "", hidden: false, addOns: [], ...pin }] }
+                  ? { ...r, windows: [...r.windows, { id, name: "", width: "", length: "", qty: 1, film: filmPresets[0].id, filmName: "", notes: "", hidden: false, addOns: [], ...pin }] }
                   : r
               ),
             }
@@ -724,22 +802,26 @@ export default function App() {
   const rollResults = useMemo(() => {
     const sortedWidths = [...rollWidths].filter((w) => w > 0).sort((a, b) => a - b);
     return rollPlan.map((g) => {
-      const pieces = g.pieces.map((p) => ({
+      // This feasibility check always assumes the best-case (shorter side
+      // across the roll) — that's the smallest footprint a piece could ever
+      // need, so it's the right basis for "does any stocked width even work."
+      // The actual packing below is free to pick either orientation per shelf.
+      const feasibilityPieces = g.pieces.map((p) => ({
         ...p,
         cross: Math.min(p.width, p.height) + crossBuffer,
         length: Math.max(p.width, p.height) + rollBuffer,
       }));
-      const maxCross = Math.max(...pieces.map((p) => p.cross));
+      const maxCross = Math.max(...feasibilityPieces.map((p) => p.cross));
       const fitWidths = sortedWidths.filter((w) => w >= maxCross);
       const oversized = fitWidths.length === 0;
       const recommended = oversized ? sortedWidths[sortedWidths.length - 1] : fitWidths[0];
       const availableWidths = oversized ? sortedWidths : fitWidths;
       const overriden = rollOverrides[g.key];
       const chosenWidth = overriden && availableWidths.includes(overriden) ? overriden : recommended;
-      const packed = packShelves(pieces, chosenWidth, kerf);
+      const packed = packShelves(g.pieces, chosenWidth, kerf, crossBuffer, rollBuffer);
       return {
         ...g,
-        pieces,
+        pieces: feasibilityPieces,
         maxCross,
         recommended,
         oversized,
@@ -747,7 +829,7 @@ export default function App() {
         chosenWidth,
         totalLengthIn: packed.totalLength,
         shelves: packed.shelves,
-        pieceCount: pieces.length,
+        pieceCount: g.pieces.length,
       };
     });
   }, [rollPlan, rollWidths, rollBuffer, crossBuffer, kerf, rollOverrides]);
@@ -790,8 +872,19 @@ export default function App() {
   const fuelCost = (parseFloat(kmTraveled) || 0) * (parseFloat(fuelRatePerKm) || 0);
   const travelTotal = (parseFloat(tripFee) || 0) + fuelCost;
   const subtotal = computed.grandTotal + addOnsTotal + computed.windowAddOnsTotal + travelTotal;
-  const tax = subtotal * ((parseFloat(taxRate) || 0) / 100);
-  const finalTotal = subtotal + tax;
+  // Percent discounts come off the subtotal; flat discounts (e.g. "$1/sq ft off
+  // instead of the usual $4/sq ft") are just a dollar amount typed straight in —
+  // for a per-item rate change, editing that line's own rate directly still works
+  // fine and doesn't need this at all. Discount comes off before tax.
+  const discountAmount = discountValue
+    ? discountType === "percent"
+      ? subtotal * ((parseFloat(discountValue) || 0) / 100)
+      : (parseFloat(discountValue) || 0)
+    : 0;
+  const discountedSubtotal = Math.max(0, subtotal - discountAmount);
+  const effectiveTaxRate = noTax ? 0 : (parseFloat(taxRate) || 0);
+  const tax = discountedSubtotal * (effectiveTaxRate / 100);
+  const finalTotal = discountedSubtotal + tax;
 
   const saveQuote = async () => {
     const id = currentQuoteId || uid();
@@ -800,6 +893,7 @@ export default function App() {
       id, savedAt: Date.now(), customer, filmPresets,
       floors,
       tripFee, taxRate, addOnPresets, appliedAddOns, kmTraveled, fuelRatePerKm,
+      discountType, discountValue, paymentMethod, noTax,
       grandTotal: finalTotal,
     };
     try {
@@ -827,6 +921,10 @@ export default function App() {
     setAppliedAddOns(q.appliedAddOns || []);
     setKmTraveled(q.kmTraveled || 0);
     setFuelRatePerKm(q.fuelRatePerKm != null ? q.fuelRatePerKm : 0.5);
+    setDiscountType(q.discountType || "percent");
+    setDiscountValue(q.discountValue || "");
+    setPaymentMethod(q.paymentMethod || "");
+    setNoTax(!!q.noTax);
     setShowSaved(false);
   };
   const deleteQuote = async (id) => {
@@ -846,6 +944,10 @@ export default function App() {
     setAppliedAddOns([]);
     setKmTraveled(0);
     setFuelRatePerKm(0.5);
+    setDiscountType("percent");
+    setDiscountValue("");
+    setPaymentMethod("");
+    setNoTax(false);
     // Pull your actual saved default rates here (not the hardcoded originals) —
     // this matters if you just had an older quote open, since that quote's
     // rates were only a historical snapshot, not your current price list.
@@ -868,10 +970,10 @@ export default function App() {
     date: new Date().toLocaleDateString("en-CA"),
     customer,
     floorLines: computed.floorSummaries.filter((fs) => !fs.hidden),
-    roomLines: floors
+    floorGroups: floors
       .filter((fl) => !fl.hidden)
-      .flatMap((fl) =>
-        fl.rooms
+      .map((fl) => {
+        const rooms = fl.rooms
           .filter((r) => !r.hidden)
           .map((r) => {
             const visibleWindows = r.windows.filter((w) => !w.hidden);
@@ -886,10 +988,14 @@ export default function App() {
               const label = (w.filmName || "").trim() || preset?.label || "";
               if (label && ws > 0) filmSet.add(label);
             });
-            return { floorName: fl.name, roomName: r.name, sqft, total, films: Array.from(filmSet) };
+            return { roomName: r.name, sqft, total, films: Array.from(filmSet) };
           })
-      )
-      .filter((rl) => rl.sqft > 0),
+          .filter((r) => r.sqft > 0);
+        const floorSqft = rooms.reduce((s, r) => s + r.sqft, 0);
+        const floorTotal = rooms.reduce((s, r) => s + r.total, 0);
+        return { floorName: fl.name, floorSqft, floorTotal, rooms };
+      })
+      .filter((fg) => fg.rooms.length > 0),
     filmLines: Object.entries(computed.byFilm).map(([id, v]) => ({
       label: filmPresets.find((f) => f.id === id)?.label || id,
       sqft: v.sqft,
@@ -902,7 +1008,11 @@ export default function App() {
     addonsTotal: addOnsTotal,
     windowAddonsTotal: computed.windowAddOnsTotal,
     travelTotal,
+    materialsPlusTravel: computed.grandTotal + travelTotal,
     subtotal,
+    discountLabel: discountAmount > 0 ? (discountType === "percent" ? `Discount (${parseFloat(discountValue) || 0}%)` : "Discount") : "",
+    discountAmount,
+    discountedSubtotal,
     taxRate: parseFloat(taxRate) || 0,
     tax,
     total: finalTotal,
@@ -957,22 +1067,32 @@ export default function App() {
     doc.setFont(undefined, "normal");
     doc.setFontSize(10);
     y += 7;
-    s.roomLines.forEach((rl) => {
+    s.floorGroups.forEach((fg) => {
+      doc.setFont(undefined, "bold");
       doc.setTextColor(20, 20, 20);
       doc.setFontSize(10);
-      doc.text(`${rl.floorName} — ${rl.roomName}`, 14, y);
-      doc.text(`${rl.sqft.toFixed(1)} sq ft`, 120, y);
-      doc.text(money(rl.total), pageWidth - 14, y, { align: "right" });
-      y += 5;
-      if (rl.films.length > 0) {
-        doc.setFontSize(8.5);
-        doc.setTextColor(120, 120, 120);
-        doc.text(`Film: ${rl.films.join(", ")}`, 14, y);
-        y += 6;
-      } else {
-        y += 3;
-      }
+      doc.text(fg.floorName, 14, y);
+      doc.text(money(fg.floorTotal), pageWidth - 14, y, { align: "right" });
+      y += 6;
+      doc.setFont(undefined, "normal");
+      fg.rooms.forEach((rl) => {
+        doc.setTextColor(60, 60, 60);
+        doc.text(rl.roomName, 20, y);
+        doc.text(money(rl.total), pageWidth - 14, y, { align: "right" });
+        y += 5;
+        if (rl.films.length > 0) {
+          doc.setFontSize(8.5);
+          doc.setTextColor(130, 130, 130);
+          doc.text(`Film: ${rl.films.join(", ")}`, 20, y);
+          doc.setFontSize(10);
+          y += 5.5;
+        } else {
+          y += 2.5;
+        }
+      });
+      y += 2;
     });
+    y += 4;
 
     if (s.addonLines.length > 0) {
       y += 4;
@@ -1015,12 +1135,12 @@ export default function App() {
       doc.text(value, pageWidth - 14, y, { align: "right" });
       y += 6;
     };
-    totalsRow("Materials + labor", money(s.materialsTotal));
+    totalsRow("Materials & Labor", money(s.materialsPlusTravel));
     if (s.addonsTotal > 0) totalsRow("Add-Ons (Whole Job)", money(s.addonsTotal));
     if (s.windowAddonsTotal > 0) totalsRow("Add-Ons (Per Window)", money(s.windowAddonsTotal));
-    totalsRow("Travel", money(s.travelTotal));
     totalsRow("Subtotal", money(s.subtotal));
-    totalsRow(`Tax (${s.taxRate}%)`, money(s.tax));
+    if (s.discountAmount > 0) totalsRow(s.discountLabel, `-${money(s.discountAmount)}`);
+    if (s.tax > 0) totalsRow(`Tax (${s.taxRate}%)`, money(s.tax));
     y += 2;
     doc.setDrawColor(11, 15, 15);
     doc.line(14, y, pageWidth - 14, y);
@@ -1047,9 +1167,12 @@ export default function App() {
     if (s.customer.email) lines.push(`Email: ${s.customer.email}`);
     lines.push("");
     lines.push("Breakdown by Floor & Room:");
-    s.roomLines.forEach((rl) => {
-      lines.push(`  ${rl.floorName} — ${rl.roomName} — ${rl.sqft.toFixed(1)} sq ft — ${money(rl.total)}`);
-      if (rl.films.length > 0) lines.push(`    Film: ${rl.films.join(", ")}`);
+    s.floorGroups.forEach((fg) => {
+      lines.push(`${fg.floorName} — ${money(fg.floorTotal)}`);
+      fg.rooms.forEach((rl) => {
+        lines.push(`  ${rl.roomName} — ${money(rl.total)}`);
+        if (rl.films.length > 0) lines.push(`    Film: ${rl.films.join(", ")}`);
+      });
     });
     if (s.addonLines.length > 0) {
       lines.push("");
@@ -1062,12 +1185,12 @@ export default function App() {
       s.windowAddonLines.forEach((a) => lines.push(`  ${a.name} — ${money(a.total)}`));
     }
     lines.push("");
-    lines.push(`Materials + labor: ${money(s.materialsTotal)}`);
+    lines.push(`Materials & Labor: ${money(s.materialsPlusTravel)}`);
     if (s.addonsTotal > 0) lines.push(`Add-Ons (Whole Job): ${money(s.addonsTotal)}`);
     if (s.windowAddonsTotal > 0) lines.push(`Add-Ons (Per Window): ${money(s.windowAddonsTotal)}`);
-    lines.push(`Travel: ${money(s.travelTotal)}`);
     lines.push(`Subtotal: ${money(s.subtotal)}`);
-    lines.push(`Tax (${s.taxRate}%): ${money(s.tax)}`);
+    if (s.discountAmount > 0) lines.push(`${s.discountLabel}: -${money(s.discountAmount)}`);
+    if (s.tax > 0) lines.push(`Tax (${s.taxRate}%): ${money(s.tax)}`);
     lines.push(`TOTAL: ${money(s.total)}`);
     lines.push("");
     lines.push("(Tip: tap \"Download PDF\" first if you'd like to attach a formatted quote to this email.)");
@@ -1104,6 +1227,9 @@ export default function App() {
     if (s.travelTotal > 0) {
       rows.push([invoiceNo, customerName, s.date, "Travel", "Trip / mileage charge", "1", s.travelTotal.toFixed(2), s.travelTotal.toFixed(2)]);
     }
+    if (s.discountAmount > 0) {
+      rows.push([invoiceNo, customerName, s.date, "Discount", s.discountLabel, "1", (-s.discountAmount).toFixed(2), (-s.discountAmount).toFixed(2)]);
+    }
     if (s.tax > 0) {
       rows.push([invoiceNo, customerName, s.date, "Sales Tax", `Tax @ ${s.taxRate}%`, "1", s.tax.toFixed(2), s.tax.toFixed(2)]);
     }
@@ -1119,6 +1245,58 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  // Builds the same set of line items as the CSV export, but POSTs them
+  // straight to your connected QuickBooks company via the API instead of
+  // downloading a file — creates a real invoice you can open right away.
+  const createQuickBooksInvoice = async () => {
+    const s = buildQuoteSummary();
+    const customerName = s.customer.name || "New Customer";
+    const lineItems = [];
+    s.filmLines.forEach((f) => {
+      const rate = f.sqft > 0 ? f.total / f.sqft : 0;
+      lineItems.push({ productName: "Window Film Installation", description: f.label, qty: Number(f.sqft.toFixed(2)), rate: Number(rate.toFixed(2)), amount: Number(f.total.toFixed(2)) });
+    });
+    s.addonLines.forEach((a) => {
+      lineItems.push({ productName: "Add-On Service", description: a.name, qty: 1, rate: Number(a.total.toFixed(2)), amount: Number(a.total.toFixed(2)) });
+    });
+    s.windowAddonLines.forEach((a) => {
+      lineItems.push({ productName: "Caulking / Sealant", description: a.name, qty: 1, rate: Number(a.total.toFixed(2)), amount: Number(a.total.toFixed(2)) });
+    });
+    if (s.travelTotal > 0) {
+      lineItems.push({ productName: "Travel", description: "Trip / mileage charge", qty: 1, rate: Number(s.travelTotal.toFixed(2)), amount: Number(s.travelTotal.toFixed(2)) });
+    }
+    if (s.discountAmount > 0) {
+      lineItems.push({ productName: "Discount", description: s.discountLabel, qty: 1, rate: Number((-s.discountAmount).toFixed(2)), amount: Number((-s.discountAmount).toFixed(2)) });
+    }
+    if (s.tax > 0) {
+      lineItems.push({ productName: "Sales Tax", description: `Tax @ ${s.taxRate}%`, qty: 1, rate: Number(s.tax.toFixed(2)), amount: Number(s.tax.toFixed(2)) });
+    }
+
+    setQbBusy(true);
+    try {
+      const res = await fetch("/api/qb/create-invoice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerName, lineItems }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatus("Invoice created in QuickBooks.");
+        window.open(data.viewUrl, "_blank");
+      } else if (data.error === "not_connected") {
+        setQbConnected(false);
+        setStatus("QuickBooks isn't connected — tap Connect QuickBooks first.");
+      } else {
+        setStatus(data.message || "Couldn't create the invoice — try again.");
+      }
+    } catch (e) {
+      setStatus("Couldn't reach QuickBooks — check your connection and try again.");
+    } finally {
+      setQbBusy(false);
+      setTimeout(() => setStatus(""), 6000);
+    }
   };
 
   return (
@@ -1144,7 +1322,16 @@ export default function App() {
             <button onClick={saveQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: TEAL, color: INK }}><Save size={15} /> {currentQuoteId ? "Update" : "Save"}</button>
             <button onClick={exportPDF} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Download size={15} /> PDF</button>
             <button onClick={emailQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Mail size={15} /> Email</button>
-            <button onClick={exportQuickBooksCSV} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><FileSpreadsheet size={15} /> QuickBooks</button>
+            {qbConnected ? (
+              <button onClick={createQuickBooksInvoice} disabled={qbBusy} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a", opacity: qbBusy ? 0.6 : 1 }}>
+                <FileSpreadsheet size={15} /> {qbBusy ? "Creating…" : "Create QB Invoice"}
+              </button>
+            ) : (
+              <button onClick={() => { window.location.href = "/api/qb/connect"; }} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}>
+                <FileSpreadsheet size={15} /> Connect QuickBooks
+              </button>
+            )}
+            <button onClick={exportQuickBooksCSV} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }} title="Download as CSV instead">CSV</button>
             <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Printer size={15} /> Print</button>
           </div>
         </div>
@@ -1504,6 +1691,59 @@ export default function App() {
               </div>
             </div>
 
+            <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }} className="p-5">
+              <SectionTitle>Discount</SectionTitle>
+              <div className="text-xs mt-1" style={{ color: STEEL }}>Leave blank for no discount — it won't appear on the quote at all unless there's a value here.</div>
+              <div className="grid grid-cols-2 gap-3 mt-3">
+                <div>
+                  <MiniLabel>Type</MiniLabel>
+                  <select value={discountType} onChange={(e) => setDiscountType(e.target.value)} className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }}>
+                    <option value="percent">Percent (%)</option>
+                    <option value="flat">Flat amount ($)</option>
+                  </select>
+                </div>
+                <div>
+                  <MiniLabel>{discountType === "percent" ? "Discount (%)" : "Discount ($)"}</MiniLabel>
+                  <input type="number" step="0.5" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} placeholder="0" className="w-full text-sm px-2 py-1.5 rounded border" style={{ borderColor: "#ddd" }} />
+                </div>
+              </div>
+              {discountAmount > 0 && (
+                <div className="flex justify-between mt-2 text-sm">
+                  <span style={{ color: STEEL }}>Discount amount</span>
+                  <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700, color: "#b91c1c" }}>-{money(discountAmount)}</span>
+                </div>
+              )}
+            </div>
+
+            <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }} className="p-5 print:hidden">
+              <SectionTitle>Job Details (Your Reference Only)</SectionTitle>
+              <div className="text-xs mt-1" style={{ color: STEEL }}>Never shown on the quote — just for you to keep track of.</div>
+              <div className="mt-3">
+                <MiniLabel>Payment Method</MiniLabel>
+                <div className="flex gap-2 mt-1">
+                  {["cash", "etransfer"].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setPaymentMethod(paymentMethod === m ? "" : m)}
+                      className="flex-1 text-sm font-semibold py-2 rounded"
+                      style={paymentMethod === m ? { background: TEAL, color: INK } : { background: PAPER, color: STEEL, border: "1px solid #ddd" }}
+                    >
+                      {m === "cash" ? "Cash" : "E-Transfer"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center justify-between mt-3">
+                <MiniLabel>No Tax on This Job</MiniLabel>
+                <button
+                  onClick={() => setNoTax((v) => !v)}
+                  style={{ width: 42, height: 24, borderRadius: 12, background: noTax ? TEAL : "#ddd", position: "relative", transition: "background 0.15s" }}
+                >
+                  <span style={{ position: "absolute", top: 2, left: noTax ? 20 : 2, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.15s" }} />
+                </button>
+              </div>
+            </div>
+
             <div style={{ background: INK, color: "#fff", borderRadius: 8 }} className="p-5">
               <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: "#9ca3af" }}>Quote Total</div>
               <div className="mt-4 space-y-2 text-sm">
@@ -1513,9 +1753,12 @@ export default function App() {
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Add-Ons (Per Window)</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(computed.windowAddOnsTotal)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Travel</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(travelTotal)}</span></div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Subtotal</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(subtotal)}</span></div>
+                {discountAmount > 0 && (
+                  <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Discount</span><span style={{ fontFamily: "ui-monospace, monospace", color: "#f87171" }}>-{money(discountAmount)}</span></div>
+                )}
                 <div className="flex items-center justify-between">
-                  <span style={{ color: "#9ca3af" }}>Tax rate (%)</span>
-                  <input type="number" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} className="w-16 text-sm px-2 py-1 rounded text-right" style={{ background: "#242424", color: "#fff", border: "1px solid #3a3a3a" }} />
+                  <span style={{ color: "#9ca3af" }}>Tax rate (%){noTax ? " — off" : ""}</span>
+                  <input type="number" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} disabled={noTax} className="w-16 text-sm px-2 py-1 rounded text-right" style={{ background: "#242424", color: noTax ? "#6b7280" : "#fff", border: "1px solid #3a3a3a" }} />
                 </div>
                 <div className="flex justify-between"><span style={{ color: "#9ca3af" }}>Tax</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{money(tax)}</span></div>
               </div>
@@ -1593,7 +1836,7 @@ export default function App() {
             {saved.length === 0 && <div className="text-sm" style={{ color: STEEL }}>No saved quotes yet.</div>}
             {saved.length > 0 && (
               <div className="text-xs mb-3" style={{ color: STEEL }}>
-                Tap a quote to reopen it. Saved quotes older than 30 days are removed automatically.
+                Tap a quote to reopen it. Saved quotes stick around until you delete them.
               </div>
             )}
             <div className="space-y-2">
