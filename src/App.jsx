@@ -338,20 +338,22 @@ function RoomCard({ room, filmPresets, addOnPresets, onRename, onRemoveRoom, onA
 
   return (
     <div style={{ border: "1px solid #eee", borderRadius: 8 }} className="p-3">
-      <div className="flex items-center justify-between gap-2 mb-2">
+      <div className="mb-2">
         <input
           value={room.name}
           onChange={(e) => onRename(e.target.value)}
-          style={{ fontWeight: 700, fontSize: 13, border: "none", background: "transparent" }}
-          className="focus:outline-none flex-1"
+          style={{ fontWeight: 700, fontSize: 13, border: "none", background: "transparent", width: "100%" }}
+          className="focus:outline-none"
         />
-        <span className="text-xs whitespace-nowrap" style={{ color: STEEL }}>
-          {roomSqft.toFixed(2)} sf &middot; <span style={{ fontWeight: 700, color: INK }}>{money(roomTotal)}</span>
-        </span>
-        <button onClick={onToggleHidden} className="p-1" style={{ color: STEEL }} title="Hide room">
-          <EyeOff size={14} />
-        </button>
-        <button onClick={onRemoveRoom} className="text-red-500 p-1"><Trash2 size={14} /></button>
+        <div className="flex items-center justify-between gap-2 mt-1">
+          <span className="text-xs" style={{ color: STEEL }}>
+            {roomSqft.toFixed(2)} sf &middot; <span style={{ fontWeight: 700, color: INK }}>{money(roomTotal)}</span>
+          </span>
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={onToggleHidden} className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5" style={{ color: STEEL }} title="Hide room"><EyeOff size={13} /> Hide</button>
+            <button onClick={onRemoveRoom} className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 text-red-500" title="Delete room"><Trash2 size={13} /> Delete</button>
+          </div>
+        </div>
       </div>
 
       <div className="space-y-2">
@@ -389,12 +391,13 @@ function CutLayoutView({ group }) {
   const scale = containerWidth / group.chosenWidth;
   return (
     <div className="mt-2">
-      <div style={{ maxHeight: 420, overflowY: "auto", border: `2px solid ${INK}`, borderRadius: 4 }}>
-        <div style={{ width: containerWidth }}>
-          {group.shelves.map((shelf, si) => (
+      <div style={{ width: containerWidth, maxHeight: 420, overflowY: "auto", border: `2px solid ${INK}`, borderRadius: 4 }}>
+        {group.shelves.map((shelf, si) => {
+          const unused = Math.max(shelf.remaining, 0);
+          return (
             <div
               key={si}
-              style={{ display: "flex", height: Math.max(shelf.height * scale, 16), borderBottom: si < group.shelves.length - 1 ? "1px dashed #999" : "none" }}
+              style={{ display: "flex", width: containerWidth, height: Math.max(shelf.height * scale, 16), borderBottom: si < group.shelves.length - 1 ? "1px dashed #999" : "none" }}
             >
               {shelf.pieces.map((p, pi) => (
                 <div
@@ -402,9 +405,10 @@ function CutLayoutView({ group }) {
                   title={`${p.label}: ${p.width.toFixed(1)}\u00d7${p.height.toFixed(1)}"`}
                   style={{
                     width: Math.max(p.cross * scale, 4),
+                    flexShrink: 0,
                     height: "100%",
                     background: pi % 2 === 0 ? "#e6fffe" : "#d4f7f6",
-                    borderRight: pi < shelf.pieces.length - 1 ? "1px solid #999" : "none",
+                    borderRight: "1px solid #999",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -417,14 +421,34 @@ function CutLayoutView({ group }) {
                   {p.width.toFixed(0)}&times;{p.height.toFixed(0)}
                 </div>
               ))}
+              {unused > 0.5 && (
+                <div
+                  title={`${unused.toFixed(1)}" unused on this cut`}
+                  style={{
+                    width: Math.max(unused * scale, 3),
+                    flexShrink: 0,
+                    height: "100%",
+                    background: "repeating-linear-gradient(45deg, #f4f4f5, #f4f4f5 5px, #e5e7eb 5px, #e5e7eb 10px)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 8,
+                    color: "#9ca3af",
+                    overflow: "hidden",
+                  }}
+                >
+                  {unused >= 6 ? `${unused.toFixed(0)}"` : ""}
+                </div>
+              )}
             </div>
-          ))}
-        </div>
+          );
+        })}
       </div>
       <div className="mt-2 space-y-1">
         {group.shelves.map((shelf, si) => (
           <div key={si} className="text-xs" style={{ color: STEEL }}>
             Cut {si + 1}: {shelf.pieces.map((p) => `${p.label} (${p.width.toFixed(1)}\u00d7${p.height.toFixed(1)}")`).join(", ")} — {shelf.height.toFixed(1)}" of roll
+            {shelf.remaining > 0.5 && ` (${shelf.remaining.toFixed(1)}" unused width)`}
           </div>
         ))}
       </div>
@@ -1315,24 +1339,24 @@ export default function App() {
               )}
             </div>
           </div>
-          <div className="flex gap-2 print:hidden">
-            <button onClick={() => setShowBusinessInfo(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }} title="Your contact info"><Settings size={15} /></button>
-            <button onClick={() => setShowSaved(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "#242424", color: "#fff" }}><FolderOpen size={15} /> Saved ({saved.length})</button>
-            <button onClick={newQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Plus size={15} /> New</button>
-            <button onClick={saveQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: TEAL, color: INK }}><Save size={15} /> {currentQuoteId ? "Update" : "Save"}</button>
-            <button onClick={exportPDF} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Download size={15} /> PDF</button>
-            <button onClick={emailQuote} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Mail size={15} /> Email</button>
+          <div className="flex gap-2 print:hidden overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: "touch", scrollbarWidth: "thin" }}>
+            <button onClick={() => setShowBusinessInfo(true)} className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }} title="Your contact info"><Settings size={15} /></button>
+            <button onClick={() => setShowSaved(true)} className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "#242424", color: "#fff" }}><FolderOpen size={15} /> Saved ({saved.length})</button>
+            <button onClick={newQuote} className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Plus size={15} /> New</button>
+            <button onClick={saveQuote} className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: TEAL, color: INK }}><Save size={15} /> {currentQuoteId ? "Update" : "Save"}</button>
+            <button onClick={exportPDF} className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Download size={15} /> PDF</button>
+            <button onClick={emailQuote} className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Mail size={15} /> Email</button>
             {qbConnected ? (
-              <button onClick={createQuickBooksInvoice} disabled={qbBusy} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a", opacity: qbBusy ? 0.6 : 1 }}>
+              <button onClick={createQuickBooksInvoice} disabled={qbBusy} className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a", opacity: qbBusy ? 0.6 : 1 }}>
                 <FileSpreadsheet size={15} /> {qbBusy ? "Creating…" : "Create QB Invoice"}
               </button>
             ) : (
-              <button onClick={() => { window.location.href = "/api/qb/connect"; }} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}>
+              <button onClick={() => { window.location.href = "/api/qb/connect"; }} className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}>
                 <FileSpreadsheet size={15} /> Connect QuickBooks
               </button>
             )}
-            <button onClick={exportQuickBooksCSV} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }} title="Download as CSV instead">CSV</button>
-            <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Printer size={15} /> Print</button>
+            <button onClick={exportQuickBooksCSV} className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }} title="Download as CSV instead">CSV</button>
+            <button onClick={() => window.print()} className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded" style={{ background: "transparent", color: "#fff", border: "1px solid #3a3a3a" }}><Printer size={15} /> Print</button>
           </div>
         </div>
         <div style={{ height: 3, background: `linear-gradient(90deg, ${TEAL}, transparent)` }} />
@@ -1375,15 +1399,17 @@ export default function App() {
 
             return (
               <section key={fl.id} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }} className="p-5">
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <input value={fl.name} onChange={(e) => renameFloor(fl.id, e.target.value)} style={{ fontWeight: 800, fontSize: 15, border: "none", background: "transparent" }} className="focus:outline-none" />
-                  <div className="text-xs" style={{ color: STEEL }}>
-                    {fs.sqft.toFixed(2)} sq ft &middot; <span style={{ fontWeight: 700, color: INK }}>{money(fs.total)}</span>
+                <div className="mb-3">
+                  <input value={fl.name} onChange={(e) => renameFloor(fl.id, e.target.value)} style={{ fontWeight: 800, fontSize: 15, border: "none", background: "transparent", width: "100%" }} className="focus:outline-none" />
+                  <div className="flex items-center justify-between gap-2 mt-1">
+                    <div className="text-xs" style={{ color: STEEL }}>
+                      {fs.sqft.toFixed(2)} sq ft &middot; <span style={{ fontWeight: 700, color: INK }}>{money(fs.total)}</span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => toggleFloorHidden(fl.id)} className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5" style={{ color: STEEL }} title="Hide floor"><EyeOff size={14} /> Hide</button>
+                      {floors.length > 1 && <button onClick={() => removeFloor(fl.id)} className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 text-red-500" title="Delete floor"><Trash2 size={14} /> Delete</button>}
+                    </div>
                   </div>
-                  <button onClick={() => toggleFloorHidden(fl.id)} className="p-1" style={{ color: STEEL }} title="Hide floor">
-                    <EyeOff size={15} />
-                  </button>
-                  {floors.length > 1 && <button onClick={() => removeFloor(fl.id)} className="text-red-500 p-1"><Trash2 size={15} /></button>}
                 </div>
 
                 <div className="space-y-3">
