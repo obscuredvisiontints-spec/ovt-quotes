@@ -313,8 +313,9 @@ function WindowRow({ w, idx, filmPresets, addOnPresets, onUpdate, onRemove, onDu
   );
 }
 
-function RoomCard({ room, filmPresets, addOnPresets, onRename, onRemoveRoom, onAddWindow, onUpdateWindow, onRemoveWindow, onDuplicateWindow, onToggleWindowHidden, onAddWindowAddOn, onUpdateWindowAddOn, onRemoveWindowAddOn, onToggleHidden }) {
+function RoomCard({ room, filmPresets, addOnPresets, onRename, onRemoveRoom, onAddWindow, onUpdateWindow, onRemoveWindow, onDuplicateWindow, onToggleWindowHidden, onAddWindowAddOn, onUpdateWindowAddOn, onRemoveWindowAddOn, onApplyFilmToAll, onToggleHidden }) {
   const visibleWindows = room.windows.filter((w) => !w.hidden);
+  const commonFilm = room.windows.length > 0 && room.windows.every((w) => w.film === room.windows[0].film) ? room.windows[0].film : "";
   const roomSqft = visibleWindows.reduce((s, w) => s + sqftOf(w), 0);
   const roomTotal = visibleWindows.reduce((s, w) => {
     const rate = filmPresets.find((f) => f.id === w.film)?.rate || 0;
@@ -355,6 +356,31 @@ function RoomCard({ room, filmPresets, addOnPresets, onRename, onRemoveRoom, onA
           </div>
         </div>
       </div>
+
+      {room.windows.length > 0 && (
+        <div className="mb-2 p-2" style={{ background: PAPER, borderRadius: 6 }}>
+          <MiniLabel>Same film for every window in this room?</MiniLabel>
+          <select
+            value={commonFilm}
+            onChange={(e) => { if (e.target.value) onApplyFilmToAll(e.target.value); }}
+            className="w-full text-sm px-2 py-1.5 rounded border mt-0.5"
+            style={{ borderColor: "#ddd" }}
+          >
+            <option value="">— mixed, pick one to apply to all —</option>
+            <optgroup label="Film">
+              {filmPresets.filter((f) => f.group === "Film").map((f) => (
+                <option key={f.id} value={f.id}>{f.label}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Protection">
+              {filmPresets.filter((f) => f.group === "Protection").map((f) => (
+                <option key={f.id} value={f.id}>{f.label}</option>
+              ))}
+            </optgroup>
+          </select>
+          <div className="text-xs mt-1" style={{ color: STEEL }}>Applies to every window below right now — you can still change individual ones after.</div>
+        </div>
+      )}
 
       <div className="space-y-2">
         {room.windows.map((w, idx) => (
@@ -470,6 +496,7 @@ export default function App() {
   const [kerf, setKerf] = useState(0.03125);
   const [rollOverrides, setRollOverrides] = useState({});
   const [expandedGroups, setExpandedGroups] = useState({});
+  const [splitMode, setSplitMode] = useState({});
   const [addOnPresets, setAddOnPresets] = useState(DEFAULT_ADDON_PRESETS);
   const [appliedAddOns, setAppliedAddOns] = useState([]);
   const [kmTraveled, setKmTraveled] = useState(0);
@@ -768,6 +795,18 @@ export default function App() {
       )
     );
 
+  // Bulk-sets one film across every window currently in a room — a one-time
+  // action, not a lasting link, so any window can still be changed
+  // individually right after.
+  const applyFilmToAllWindows = (floorId, roomId, filmId) =>
+    setFloors((f) =>
+      f.map((fl) =>
+        fl.id === floorId
+          ? { ...fl, rooms: fl.rooms.map((r) => (r.id !== roomId ? r : { ...r, windows: r.windows.map((w) => ({ ...w, film: filmId })) })) }
+          : fl
+      )
+    );
+
   const persistFilmPresets = (list) => { window.storage.set("pricelist:film", JSON.stringify(list)).catch(() => {}); };
   const updateFilmPreset = (id, field, value) => setFilmPresets((fp) => { const next = fp.map((f) => (f.id === id ? { ...f, [field]: value } : f)); persistFilmPresets(next); return next; });
   const addFilmPreset = (group) => setFilmPresets((fp) => { const next = [...fp, { id: uid(), group, label: "New Option", products: "", rate: 0 }]; persistFilmPresets(next); return next; });
@@ -843,6 +882,32 @@ export default function App() {
       const overriden = rollOverrides[g.key];
       const chosenWidth = overriden && availableWidths.includes(overriden) ? overriden : recommended;
       const packed = packShelves(g.pieces, chosenWidth, kerf, crossBuffer, rollBuffer);
+
+      // Alternative: instead of forcing every piece onto one wide roll just
+      // because a couple of big pieces need it, see what happens if each
+      // piece instead goes on the SMALLEST stocked width that actually fits
+      // it — a handful of 60-72" pieces no longer drag a bunch of small
+      // pieces onto a roll wider (and pricier) than they ever needed.
+      let splitPlan = null;
+      if (!oversized) {
+        const pieceTier = (p) => {
+          const minCross = Math.min(p.width, p.height) + crossBuffer;
+          return sortedWidths.find((w) => w >= minCross) ?? sortedWidths[sortedWidths.length - 1];
+        };
+        const distinctTiers = [...new Set(g.pieces.map(pieceTier))].sort((a, b) => a - b);
+        if (distinctTiers.length > 1) {
+          const tierResults = distinctTiers.map((tw) => {
+            const piecesForTier = g.pieces.filter((p) => pieceTier(p) === tw);
+            const tierPacked = packShelves(piecesForTier, tw, kerf, crossBuffer, rollBuffer);
+            return { width: tw, shelves: tierPacked.shelves, totalLength: tierPacked.totalLength, pieceCount: piecesForTier.length };
+          });
+          const splitTotalLength = tierResults.reduce((s, t) => s + t.totalLength, 0);
+          if (splitTotalLength < packed.totalLength - 0.5) {
+            splitPlan = { tiers: tierResults, totalLength: splitTotalLength, savedIn: packed.totalLength - splitTotalLength };
+          }
+        }
+      }
+
       return {
         ...g,
         pieces: feasibilityPieces,
@@ -854,6 +919,7 @@ export default function App() {
         totalLengthIn: packed.totalLength,
         shelves: packed.shelves,
         pieceCount: g.pieces.length,
+        splitPlan,
       };
     });
   }, [rollPlan, rollWidths, rollBuffer, crossBuffer, kerf, rollOverrides]);
@@ -1429,6 +1495,7 @@ export default function App() {
                       onAddWindowAddOn={(winId, presetId) => addWindowAddOn(fl.id, r.id, winId, presetId)}
                       onUpdateWindowAddOn={(winId, addOnId, field, value) => updateWindowAddOn(fl.id, r.id, winId, addOnId, field, value)}
                       onRemoveWindowAddOn={(winId, addOnId) => removeWindowAddOn(fl.id, r.id, winId, addOnId)}
+                      onApplyFilmToAll={(filmId) => applyFilmToAllWindows(fl.id, r.id, filmId)}
                       onToggleHidden={() => toggleRoomHidden(fl.id, r.id)}
                     />
                   ))}
@@ -1592,50 +1659,106 @@ export default function App() {
                   {rollResults.every((g) => expandedGroups[g.key]) ? "Hide all cut layouts" : "Show all cut layouts"}
                 </button>
               )}
-              {rollResults.map((g) => (
-                <div key={g.key} style={{ border: "1px solid #eee", borderRadius: 6 }} className="p-3">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div>
-                      <div className="text-sm font-semibold">{g.displayName}</div>
-                      <div className="text-xs" style={{ color: STEEL }}>
-                        {g.pieceCount} piece{g.pieceCount !== 1 ? "s" : ""} &middot; needs at least {g.maxCross.toFixed(2)}" cross
+              {rollResults.map((g) => {
+                const useSplit = !!(splitMode[g.key] && g.splitPlan);
+                return (
+                  <div key={g.key} style={{ border: "1px solid #eee", borderRadius: 6 }} className="p-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div>
+                        <div className="text-sm font-semibold">{g.displayName}</div>
+                        <div className="text-xs" style={{ color: STEEL }}>
+                          {g.pieceCount} piece{g.pieceCount !== 1 ? "s" : ""} &middot; needs at least {g.maxCross.toFixed(2)}" cross
+                        </div>
                       </div>
+                      {!useSplit && (
+                        <div className="flex items-center gap-2">
+                          <MiniLabel>Roll width</MiniLabel>
+                          <select
+                            value={g.chosenWidth}
+                            onChange={(e) => setRollOverrides((o) => ({ ...o, [g.key]: parseFloat(e.target.value) }))}
+                            className="text-sm px-2 py-1 rounded border"
+                            style={{ borderColor: "#ddd" }}
+                          >
+                            {g.availableWidths.map((w) => (
+                              <option key={w} value={w}>{w}"</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <MiniLabel>Roll width</MiniLabel>
-                      <select
-                        value={g.chosenWidth}
-                        onChange={(e) => setRollOverrides((o) => ({ ...o, [g.key]: parseFloat(e.target.value) }))}
-                        className="text-sm px-2 py-1 rounded border"
-                        style={{ borderColor: "#ddd" }}
-                      >
-                        {g.availableWidths.map((w) => (
-                          <option key={w} value={w}>{w}"</option>
-                        ))}
-                      </select>
-                    </div>
+                    {g.oversized && (
+                      <div className="text-xs mt-1.5" style={{ color: "#b91c1c" }}>
+                        No stocked roll width covers this piece — showing your widest available. Confirm with your supplier or plan a splice.
+                      </div>
+                    )}
+
+                    {g.splitPlan && (
+                      <div className="mt-2 p-2" style={{ background: useSplit ? "#f0fffe" : PAPER, border: `1px solid ${useSplit ? TEAL : "#eee"}`, borderRadius: 6 }}>
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="text-xs" style={{ color: useSplit ? TEAL_DEEP : STEEL }}>
+                            {useSplit
+                              ? `Using ${g.splitPlan.tiers.map((t) => `${t.width}"`).join(" + ")} rolls instead of one ${g.chosenWidth}" roll`
+                              : `Splitting across ${g.splitPlan.tiers.map((t) => `${t.width}"`).join(" + ")} rolls would save ${g.splitPlan.savedIn.toFixed(1)}" of material`}
+                          </div>
+                          <button
+                            onClick={() => setSplitMode((sm) => ({ ...sm, [g.key]: !sm[g.key] }))}
+                            className="text-xs font-semibold px-2 py-1 rounded"
+                            style={{ background: useSplit ? INK : "#fff", color: useSplit ? "#fff" : TEAL_DEEP, border: `1px solid ${TEAL}` }}
+                          >
+                            {useSplit ? "Use single roll instead" : "Use split widths"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {useSplit ? (
+                      <>
+                        <div className="flex justify-between mt-2 text-sm">
+                          <span style={{ color: STEEL }}>Total length needed</span>
+                          <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700 }}>
+                            {g.splitPlan.totalLength.toFixed(1)}" ({feetInches(g.splitPlan.totalLength)})
+                          </span>
+                        </div>
+                        <div className="mt-2 space-y-3">
+                          {g.splitPlan.tiers.map((tier, ti) => (
+                            <div key={tier.width} style={{ borderTop: ti > 0 ? "1px dashed #eee" : "none", paddingTop: ti > 0 ? 8 : 0 }}>
+                              <div className="flex justify-between text-xs" style={{ color: STEEL }}>
+                                <span>{tier.width}" roll &middot; {tier.pieceCount} piece{tier.pieceCount !== 1 ? "s" : ""}</span>
+                                <span style={{ fontFamily: "ui-monospace, monospace" }}>{tier.totalLength.toFixed(1)}" ({feetInches(tier.totalLength)})</span>
+                              </div>
+                              <button
+                                onClick={() => setExpandedGroups((eg) => ({ ...eg, [`${g.key}:${tier.width}`]: !eg[`${g.key}:${tier.width}`] }))}
+                                className="text-xs font-semibold mt-1"
+                                style={{ color: TEAL_DEEP }}
+                              >
+                                {expandedGroups[`${g.key}:${tier.width}`] ? "Hide cut layout" : "Show cut layout"}
+                              </button>
+                              {expandedGroups[`${g.key}:${tier.width}`] && <CutLayoutView group={{ chosenWidth: tier.width, shelves: tier.shelves }} />}
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex justify-between mt-2 text-sm">
+                          <span style={{ color: STEEL }}>Length needed</span>
+                          <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700 }}>
+                            {g.totalLengthIn.toFixed(1)}" ({feetInches(g.totalLengthIn)})
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => setExpandedGroups((eg) => ({ ...eg, [g.key]: !eg[g.key] }))}
+                          className="text-xs font-semibold mt-2"
+                          style={{ color: TEAL_DEEP }}
+                        >
+                          {expandedGroups[g.key] ? "Hide cut layout" : "Show cut layout"}
+                        </button>
+                        {expandedGroups[g.key] && <CutLayoutView group={g} />}
+                      </>
+                    )}
                   </div>
-                  {g.oversized && (
-                    <div className="text-xs mt-1.5" style={{ color: "#b91c1c" }}>
-                      No stocked roll width covers this piece — showing your widest available. Confirm with your supplier or plan a splice.
-                    </div>
-                  )}
-                  <div className="flex justify-between mt-2 text-sm">
-                    <span style={{ color: STEEL }}>Length needed</span>
-                    <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700 }}>
-                      {g.totalLengthIn.toFixed(1)}" ({feetInches(g.totalLengthIn)})
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => setExpandedGroups((eg) => ({ ...eg, [g.key]: !eg[g.key] }))}
-                    className="text-xs font-semibold mt-2"
-                    style={{ color: TEAL_DEEP }}
-                  >
-                    {expandedGroups[g.key] ? "Hide cut layout" : "Show cut layout"}
-                  </button>
-                  {expandedGroups[g.key] && <CutLayoutView group={g} />}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         </div>
